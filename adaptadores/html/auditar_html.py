@@ -82,7 +82,19 @@ def declaraciones(css: str) -> list[tuple[str, str]]:
 
 
 def valores(css: str) -> str:
-    return "\n".join(v for _, v in declaraciones(css))
+    # url(#fade) es una referencia a un id, no un color.
+    return "\n".join(re.sub(r"url\([^)]*\)", " ", v) for _, v in declaraciones(css))
+
+
+def css_en_linea(doc: str) -> str:
+    """Lo que se pinta desde el HTML: style="" y los atributos de color de SVG
+    (fill, stroke…) y del HTML antiguo (color, bgcolor), como reglas CSS."""
+    html = sin_codigo(doc)
+    reglas = [m.group(2) for m in re.finditer(r"\sstyle\s*=\s*([\"'])(.*?)\1", html, re.S | re.I)]
+    reglas += [f"{m.group(1)}:{m.group(3)}" for m in re.finditer(
+        r"\s(fill|stroke|stop-color|flood-color|color|bgcolor)\s*=\s*([\"'])(.*?)\2",
+        html, re.S | re.I)]
+    return "\n".join("{" + r + "}" for r in reglas)
 
 
 # Propiedades donde una palabra suelta puede ser un color con nombre («red»).
@@ -156,6 +168,7 @@ def revisar(ruta: Path) -> int:
               f"{abiertos} <style> abiertos y {cerrados} cerrados: el CSS no se puede auditar")
 
     css, marcado = bloque_auditable(doc)
+    css += "\n" + css_en_linea(doc)
     if not marcado:
         print('   nota: no hay <style id="casa">; se audita TODO el CSS de la página.')
 

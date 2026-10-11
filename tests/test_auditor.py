@@ -129,6 +129,7 @@ DEFECTOS = {
                                                                 "lightyellow"}},
     "hsl": {"hsl() fuera de la paleta": set()},
     "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
+    "estilo_en_linea_y_svg": {"color fuera de la paleta": {"#FF00FF", "#123456", "#00FF00"}},
 }
 
 
