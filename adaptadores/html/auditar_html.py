@@ -113,10 +113,10 @@ def revisar(ruta: Path) -> int:
         en_uso = valores(css)
         for hx in sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}\b", en_uso))):
             h = hx.upper()
+            if len(h) in (4, 5):                  # #ABC y #ABCD -> #AABBCC(DD)
+                h = "#" + "".join(c * 2 for c in h[1:])
             if len(h) == 9:                       # #RRGGBBAA: se compara sin alfa
                 h = h[:7]
-            if len(h) == 4:                       # #ABC -> #AABBCC
-                h = "#" + "".join(c * 2 for c in h[1:])
             if h not in permitidos:
                 falla("color fuera de la paleta", hx)
 

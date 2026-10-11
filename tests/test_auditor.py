@@ -123,6 +123,7 @@ def test_html_valido_no_da_hallazgos(ruta):
 # archivo -> {regla: detalles que deben aparecer (vacío = basta la regla)}
 DEFECTOS = {
     "color_en_hover_y_media": {"color fuera de la paleta": {"#123456", "#ABCDEF"}},
+    "hex_invalido": {"color fuera de la paleta": {"#1B243"}},
 }
 
 
