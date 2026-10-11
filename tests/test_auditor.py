@@ -125,6 +125,10 @@ DEFECTOS = {
     "color_en_hover_y_media": {"color fuera de la paleta": {"#123456", "#ABCDEF"}},
     "hex_invalido": {"color fuera de la paleta": {"#1B243"}},
     "familia_solo_en_el_texto": {"no se usa Inter": set()},
+    "color_con_nombre": {"color con nombre fuera de la paleta": {"darkslategray",
+                                                                "lightyellow"}},
+    "hsl": {"hsl() fuera de la paleta": set()},
+    "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
 }
 
 

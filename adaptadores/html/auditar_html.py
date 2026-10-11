@@ -32,6 +32,7 @@ QUÉ NO REVISA
 from __future__ import annotations
 
 import argparse
+import colorsys
 import re
 import shutil
 import subprocess
@@ -73,11 +74,47 @@ def bloque_auditable(doc: str) -> tuple[str, bool]:
     return _vaciar(r"/\*.*?\*/", css), marcado
 
 
+def declaraciones(css: str) -> list[tuple[str, str]]:
+    """Pares (propiedad, valor) de las declaraciones (`color: #1B2430`). En un
+    selector, `#bad` o `#add` son ids, no colores: por eso solo se miran valores."""
+    return [(m.group(1).lower(), m.group(2)) for m in re.finditer(
+        r"(?<![\w-])(-*[a-zA-Z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|\Z)", css)]
+
+
 def valores(css: str) -> str:
-    """Solo los VALORES de las declaraciones (`color: #1B2430`). En un selector,
-    `#bad` o `#add` son ids, no colores."""
-    return "\n".join(m.group(1) for m in re.finditer(
-        r"(?<![\w-])-*[a-zA-Z][\w-]*\s*:\s*([^;{}]*)(?=[;}]|\Z)", css))
+    return "\n".join(v for _, v in declaraciones(css))
+
+
+# Propiedades donde una palabra suelta puede ser un color con nombre («red»).
+PROP_DE_COLOR = re.compile(
+    r"^(--.*|.*color|background|border(-[a-z-]+)?|outline|fill|stroke|"
+    r"text-decoration|column-rule|box-shadow|text-shadow)$")
+
+
+def colores_con_nombre() -> dict[str, str]:
+    """Los 148 colores con nombre de CSS -> hex. Se toman de matplotlib, que ya
+    es dependencia, en vez de copiar la tabla aquí."""
+    from matplotlib.colors import CSS4_COLORS
+    return {k.lower(): v.upper() for k, v in CSS4_COLORS.items()}
+
+
+def a_rgb(funcion: str, args: str) -> tuple[int, int, int] | None:
+    """rgb()/rgba() con números o %, y hsl()/hsla() con o sin `deg`, a (r, g, b).
+    None si no se puede leer (p. ej. lleva var())."""
+    partes = [x for x in re.split(r"[\s,/]+", args.strip()) if x][:3]
+    if len(partes) < 3 or "var" in args:
+        return None
+    try:
+        if funcion.startswith("rgb"):
+            return tuple(round(float(x[:-1]) * 2.55) if x.endswith("%") else round(float(x))
+                         for x in partes)
+        h, sat, luz = partes
+        h = float(h[:-4]) * 360 if h.endswith("turn") else float(h.removesuffix("deg"))
+        r, g, b = colorsys.hls_to_rgb((h % 360) / 360, float(luz.rstrip("%")) / 100,
+                                      float(sat.rstrip("%")) / 100)
+        return round(r * 255), round(g * 255), round(b * 255)
+    except ValueError:
+        return None
 
 
 def usa_familia(doc: str, familia: str) -> bool:
@@ -135,16 +172,40 @@ def revisar(ruta: Path) -> int:
             if h not in permitidos:
                 falla("color fuera de la paleta", hx)
 
-        validos = {tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
-                   for h in T.paleta_hex()} | {(255, 255, 255), (0, 0, 0)}
-        for r, g, b in set(re.findall(
-                r"rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)", en_uso)):
-            try:
-                trio = (int(float(r)), int(float(g)), int(float(b)))
-            except ValueError:
+        def rgb_de(h: str) -> tuple[int, ...]:
+            return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+        validos = {rgb_de(h) for h in permitidos if len(h) == 7}
+
+        def en_paleta(trio) -> bool:
+            # ±1 por canal: hsl() y los % no caen exacto en un entero al convertir.
+            return any(all(abs(a - b) <= 1 for a, b in zip(trio, v, strict=True))
+                       for v in validos)
+
+        for funcion, args in sorted(set(re.findall(r"\b(rgba?|hsla?)\(([^)]*)\)", en_uso, re.I))):
+            trio = a_rgb(funcion.lower(), args)
+            if trio is None or en_paleta(trio):
                 continue
-            if trio not in validos:
+            if funcion.lower().startswith("rgb"):
                 falla("rgb() fuera de la paleta", f"rgb{trio}")
+            else:
+                hx = "#" + "".join(f"{c:02X}" for c in trio)
+                falla("hsl() fuera de la paleta", f"{funcion}({args.strip()}) = {hx}")
+
+        nombres = set()
+        for prop, valor in declaraciones(css):
+            if PROP_DE_COLOR.match(prop):
+                valor = re.sub(r"url\([^)]*\)|([\"']).*?\1|var\([^)]*\)", " ", valor)
+                nombres |= {w.lower() for w in re.findall(r"(?<![\w#-])[a-zA-Z]+(?![\w(-])", valor)}
+        if nombres:
+            try:
+                tabla = colores_con_nombre()
+            except ImportError:
+                tabla = {}
+                print("   nota: sin matplotlib no se revisan los colores con nombre (red, gray…)")
+            for nombre in sorted(nombres & tabla.keys()):
+                if tabla[nombre] not in permitidos:
+                    falla("color con nombre fuera de la paleta", nombre)
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
