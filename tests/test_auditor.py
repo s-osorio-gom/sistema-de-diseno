@@ -124,6 +124,7 @@ def test_html_valido_no_da_hallazgos(ruta):
 DEFECTOS = {
     "color_en_hover_y_media": {"color fuera de la paleta": {"#123456", "#ABCDEF"}},
     "hex_invalido": {"color fuera de la paleta": {"#1B243"}},
+    "familia_solo_en_el_texto": {"no se usa Inter": set()},
 }
 
 

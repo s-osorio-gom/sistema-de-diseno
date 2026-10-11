@@ -80,6 +80,21 @@ def valores(css: str) -> str:
         r"(?<![\w-])-*[a-zA-Z][\w-]*\s*:\s*([^;{}]*)(?=[;}]|\Z)", css))
 
 
+def usa_familia(doc: str, familia: str) -> bool:
+    """¿Alguna regla CSS pide la familia? Se mira en font-family, font y en las
+    propiedades personalizadas (`--fuente: 'Inter', …` usada con var()). Que la
+    palabra aparezca en el texto («Internet») no cuenta, y en CSS los nombres de
+    familia no distinguen mayúsculas."""
+    limpio = sin_comentarios(doc)
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", limpio, re.S | re.I))
+    css = _vaciar(r"/\*.*?\*/", css)
+    css += "\n" + "\n".join(m.group(2) for m in re.finditer(
+        r"\sstyle\s*=\s*([\"'])(.*?)\1", sin_codigo(doc), re.S | re.I))
+    nombre = re.compile(rf"(?<![\w-]){re.escape(familia)}(?![\w-])", re.I)
+    return any(nombre.search(m.group(1)) for m in re.finditer(
+        r"(?<![\w-])(?:font-family|font|--[\w-]+)\s*:\s*([^;{}]*)", css, re.I))
+
+
 def sin_codigo(doc: str) -> str:
     """El HTML que se pinta: sin comentarios, <script> ni <style>. Un `'<h2>…'`
     dentro de un script es código, no un título."""
@@ -133,7 +148,7 @@ def revisar(ruta: Path) -> int:
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
-    if fam and fam not in doc:
+    if fam and not usa_familia(doc, fam):
         falla(f"no se usa {fam}", "es la familia obligatoria")
     elif R["tipografia"].get("debe_ir_empotrada"):
         if "@font-face" not in doc:
