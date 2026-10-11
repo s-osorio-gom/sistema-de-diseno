@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Tablero con defectos a propósito</title>
+<!--
+  Este archivo existe para comprobar que el auditor muerde. Cada defecto está
+  marcado. Si alguno deja de reportarse, el auditor se rompió.
+-->
+<style id="casa">
+  body { font-family: Arial, sans-serif;            /* 1. no es la familia obligatoria */
+         background: #EFEFEF;                        /* 2. color fuera de la paleta */
+         color: #333333;                             /* 3. color fuera de la paleta */
+         padding: 24px; }
+  h1 { color: rgb(47, 93, 184); }
+  .caja { box-shadow: 0 4px 12px rgba(0,0,0,.2);     /* 4. sombra: la casa es plana */
+          background: linear-gradient(#FFFFFF, #DDDDDD); /* 5. degradado */
+          padding: 16px; }
+</style></head>
+<body>
+  <h1>Comparación de indicadores por región</h1>   <!-- 6. título que nombra, no afirma -->
+  <div class="caja">
+    <p>Venta total: $1,240,000 COP</p>  <!-- 7. separador de miles y 8. la palabra COP -->
+    <p>Cumplimiento: 76.2% del objetivo</p> <!-- 9. decimal y 10. falta espacio antes del % -->
+    <p>Variación: 340 MM frente al mes anterior</p> <!-- 11. se usa MM -->
+  </div>
+</body></html>

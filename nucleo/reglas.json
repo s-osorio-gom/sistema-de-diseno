@@ -1,0 +1,56 @@
+{
+  "_": "Reglas que audita adaptadores/html/auditar_html.py. Ajústelas a su casa.",
+  "colores": {
+    "solo_de_la_paleta": true,
+    "permitidos_extra": [
+      "#FFF",
+      "#FFFFFF",
+      "#000",
+      "#000000",
+      "transparent"
+    ]
+  },
+  "tipografia": {
+    "familia_obligatoria": "Inter",
+    "debe_ir_empotrada": false,
+    "_nota_empotrada": "Póngalo en true si su fuente es de licencia propia y el entregable debe abrir sin internet."
+  },
+  "cifras": {
+    "separador_miles": ".",
+    "separador_decimal": ",",
+    "sufijo_millones": "M",
+    "palabras_prohibidas": [
+      "COP",
+      "MM"
+    ],
+    "espacio_antes_del_porcentaje": true,
+    "signo_antes_del_simbolo": true,
+    "_nota": "Convención en español: 1.240.000 y 76,2 %. Para la convención inglesa, invierta los dos separadores."
+  },
+  "diseno": {
+    "plano": true,
+    "propiedades_prohibidas": [
+      "box-shadow",
+      "text-shadow",
+      "linear-gradient",
+      "radial-gradient"
+    ]
+  },
+  "narrativa": {
+    "titulos_deben_afirmar": true,
+    "inicios_vagos": [
+      "comparaci",
+      "indicadores",
+      "tabla de",
+      "datos de",
+      "gráfica",
+      "grafica",
+      "análisis de",
+      "analisis de",
+      "resumen de",
+      "detalle de",
+      "informaci",
+      "estado de"
+    ]
+  }
+}
