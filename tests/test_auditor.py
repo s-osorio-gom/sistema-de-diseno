@@ -117,3 +117,26 @@ def test_html_valido_no_da_hallazgos(ruta):
     A.revisar(ruta)
     assert A.hallazgos == []
     assert correr(ruta).returncode == 0
+
+
+# Cada archivo de tests/html/defectos lleva defectos que el ejemplo no tiene.
+# archivo -> {regla: detalles que deben aparecer (vacío = basta la regla)}
+DEFECTOS = {
+    "color_en_hover_y_media": {"color fuera de la paleta": {"#123456", "#ABCDEF"}},
+}
+
+
+@pytest.mark.parametrize(("nombre", "esperado"), DEFECTOS.items(), ids=list(DEFECTOS))
+def test_html_con_defectos_se_detecta(nombre, esperado):
+    ruta = RAIZ / "tests" / "html" / "defectos" / f"{nombre}.html"
+    A.revisar(ruta)
+    for regla, detalles in esperado.items():
+        hallados = {d for r, d in A.hallazgos if r == regla}
+        assert hallados, f"{regla!r} no se reportó: {A.hallazgos}"
+        assert detalles <= hallados, detalles - hallados
+    assert correr(ruta).returncode == 1
+
+
+def test_cada_archivo_de_defectos_tiene_su_expectativa():
+    archivos = {r.stem for r in (RAIZ / "tests" / "html" / "defectos").glob("*.html")}
+    assert archivos == set(DEFECTOS)

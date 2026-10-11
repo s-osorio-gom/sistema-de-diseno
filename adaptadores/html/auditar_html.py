@@ -73,6 +73,13 @@ def bloque_auditable(doc: str) -> tuple[str, bool]:
     return _vaciar(r"/\*.*?\*/", css), marcado
 
 
+def valores(css: str) -> str:
+    """Solo los VALORES de las declaraciones (`color: #1B2430`). En un selector,
+    `#bad` o `#add` son ids, no colores."""
+    return "\n".join(m.group(1) for m in re.finditer(
+        r"(?<![\w-])-*[a-zA-Z][\w-]*\s*:\s*([^;{}]*)(?=[;}]|\Z)", css))
+
+
 def sin_codigo(doc: str) -> str:
     """El HTML que se pinta: sin comentarios, <script> ni <style>. Un `'<h2>…'`
     dentro de un script es código, no un título."""
@@ -103,7 +110,8 @@ def revisar(ruta: Path) -> int:
     # ── paleta ──────────────────────────────────────────────────────────────
     if R["colores"]["solo_de_la_paleta"]:
         permitidos = T.paleta_hex() | {c.upper() for c in R["colores"]["permitidos_extra"]}
-        for hx in sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}\b", css))):
+        en_uso = valores(css)
+        for hx in sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}\b", en_uso))):
             h = hx.upper()
             if len(h) == 9:                       # #RRGGBBAA: se compara sin alfa
                 h = h[:7]
@@ -115,7 +123,7 @@ def revisar(ruta: Path) -> int:
         validos = {tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
                    for h in T.paleta_hex()} | {(255, 255, 255), (0, 0, 0)}
         for r, g, b in set(re.findall(
-                r"rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)", css)):
+                r"rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)", en_uso)):
             try:
                 trio = (int(float(r)), int(float(g)), int(float(b)))
             except ValueError:
