@@ -46,7 +46,9 @@ def copia(tmp_path_factory) -> Path:
 
 
 def _correr(copia: Path, *args) -> subprocess.CompletedProcess:
-    entorno = {**os.environ, "DENTRO_DE_ADOPCION": "1"}
+    # El modo --navegador no depende de la paleta y ya se prueba fuera: dentro de
+    # la copia se omite para no abrir Chrome dos veces.
+    entorno = {**os.environ, "DENTRO_DE_ADOPCION": "1", "AUDITOR_NAVEGADOR": "/no/existe"}
     return subprocess.run([sys.executable, *args], cwd=copia, env=entorno, capture_output=True,
                           text=True, encoding="utf-8", check=False, timeout=600)
 
