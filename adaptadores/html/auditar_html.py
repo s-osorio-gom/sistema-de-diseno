@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import os
 import re
 import shutil
 import subprocess
@@ -351,7 +352,10 @@ def en_navegador(ruta: Path):
         tmp = Path(carpeta) / "chk.html"
         tmp.write_text(inyectado, encoding="utf-8")
         try:
-            r = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", "--no-sandbox",
+            # El sandbox aísla el JS de la página (puede traer librerías de
+            # terceros). Solo se quita como root, donde Chrome no arranca con él.
+            sin_sandbox = ["--no-sandbox"] if getattr(os, "geteuid", lambda: 1)() == 0 else []
+            r = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", *sin_sandbox,
                                 "--virtual-time-budget=15000", "--window-size=1680,1200",
                                 "--dump-dom", tmp.as_uri()],
                                capture_output=True, text=True, encoding="utf-8",
