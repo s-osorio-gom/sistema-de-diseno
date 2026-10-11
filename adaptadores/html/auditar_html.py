@@ -11,12 +11,18 @@ CÓDIGO DE SALIDA
     se cae no se confunda con uno que encontró defectos.
 
 QUÉ REVISA
-    paleta       ningún color fuera de los definidos en nucleo/tokens.json
+    paleta       ningún color fuera de los definidos en nucleo/tokens.json: #hex
+                 (3, 4, 6 y 8 dígitos), rgb()/rgba(), hsl()/hsla() y colores con
+                 nombre, en <style>, en style="" y en fill/stroke de SVG.
+                 Comentarios y <script> no se auditan.
     tipografía   la familia obligatoria, y que esté empotrada si así se exige
     cifras       separadores, sufijos, el espacio antes del %, palabras vetadas
     narrativa    títulos que NOMBRAN un tema en vez de AFIRMAR una conclusión
     diseño       sombras y degradados, si la casa es de diseño plano
     navegador    que la página abra, pinte y no lance errores de JavaScript
+                 (Chrome/Chromium; otro binario con AUDITOR_NAVEGADOR=/ruta)
+
+    Cada hallazgo dice su línea en el archivo.
 
 QUÉ NO REVISA
     Si los NÚMEROS están bien. Eso exige un control que los recalcule desde la
@@ -28,6 +34,7 @@ QUÉ NO REVISA
    <style id="casa">…</style> y se auditará solo ese. Sin la marca se audita
    todo y se reportan violaciones ajenas: son ruido, y hacen que nadie vuelva a
    mirar el reporte.
+   Los style="" y los atributos de color de SVG del cuerpo se auditan siempre.
 """
 from __future__ import annotations
 
