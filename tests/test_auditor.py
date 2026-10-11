@@ -1,5 +1,6 @@
 """El auditor: muerde el defectuoso, deja pasar el conforme y no confunde un
 fallo propio con un hallazgo."""
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -147,3 +148,30 @@ def test_html_con_defectos_se_detecta(nombre, esperado):
 def test_cada_archivo_de_defectos_tiene_su_expectativa():
     archivos = {r.stem for r in (RAIZ / "tests" / "html" / "defectos").glob("*.html")}
     assert archivos == set(DEFECTOS)
+
+
+def test_cada_defecto_del_ejemplo_dice_su_linea():
+    # La línea de cada defecto es la que lleva su marca «N.» en el archivo.
+    lineas = DEFECTUOSO.read_text(encoding="utf-8").splitlines()
+    marca = {n: i for i, t in enumerate(lineas, 1) for n in range(1, 12)
+             if re.search(rf"(/\*|<!--|y) {n}\. ", t)}
+    A.revisar(DEFECTUOSO)
+    donde = {(r, d): h.lineas for h in A.hallazgos for r, d in [h]}
+    esperado = {
+        ("no se usa Inter", "es la familia obligatoria"): 1,
+        ("color fuera de la paleta", "#EFEFEF"): 2,
+        ("color fuera de la paleta", "#333333"): 3,
+        ("título que nombra en vez de afirmar", "Comparación de indicadores por región"): 6,
+        ("separador de miles equivocado", "$1,240,000  ->  use «.»"): 7,
+        ("separador decimal equivocado en un porcentaje", "76.2%  ->  use «,»"): 9,
+        ("falta el espacio antes del %", "76.2%"): 10,
+    }
+    for clave, n in esperado.items():
+        assert donde[clave] == [marca[n]], (clave, donde[clave], marca[n])
+    assert [h.lineas for h in A.hallazgos if h[0] == "se usa box-shadow"] == [[marca[4]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "se usa linear-gradient"] == [[marca[5]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "aparece «MM»"] == [[marca[11]]]
+
+
+def test_el_reporte_imprime_la_linea():
+    assert "#333333  (línea 11)" in correr(DEFECTUOSO).stdout

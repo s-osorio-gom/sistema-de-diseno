@@ -44,11 +44,33 @@ RAIZ = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ))
 from nucleo import tokens as T  # noqa: E402
 
-hallazgos: list[tuple[str, str]] = []
+
+class Hallazgo(tuple):
+    """El par (regla, detalle) de siempre, más `.lineas`: dónde está en el archivo."""
+
+    def __new__(cls, regla: str, detalle: str, lineas=()):
+        h = super().__new__(cls, (regla, detalle))
+        h.lineas = sorted(set(lineas))
+        return h
 
 
-def falla(regla: str, detalle: str):
-    hallazgos.append((regla, detalle))
+hallazgos: list[Hallazgo] = []
+
+
+def falla(regla: str, detalle: str, patron: str | None = None, en: str = "",
+          flags=re.I):
+    """Registra un hallazgo. `patron` (regex) se busca en `en` —un texto con los
+    mismos saltos de línea que el archivo— para decir en qué líneas está."""
+    lineas = ([en.count("\n", 0, m.start()) + 1 for m in re.finditer(patron, en, flags)]
+              if patron else [])
+    hallazgos.append(Hallazgo(regla, detalle, lineas))
+
+
+def _donde(lineas: list[int]) -> str:
+    if not lineas:
+        return ""
+    txt = ", ".join(map(str, lineas[:5])) + ("…" if len(lineas) > 5 else "")
+    return f"  (línea{'s' if len(lineas) > 1 else ''} {txt})"
 
 
 def _vaciar(patron: str, texto: str) -> str:
@@ -168,6 +190,9 @@ def revisar(ruta: Path) -> int:
               f"{abiertos} <style> abiertos y {cerrados} cerrados: el CSS no se puede auditar")
 
     css, marcado = bloque_auditable(doc)
+    # Para ubicar hallazgos: el archivo sin comentarios (mismas líneas).
+    fuente = _vaciar(r"/\*.*?\*/", sin_comentarios(doc))
+    html = sin_codigo(doc)
     css += "\n" + css_en_linea(doc)
     if not marcado:
         print('   nota: no hay <style id="casa">; se audita TODO el CSS de la página.')
@@ -183,7 +208,8 @@ def revisar(ruta: Path) -> int:
             if len(h) == 9:                       # #RRGGBBAA: se compara sin alfa
                 h = h[:7]
             if h not in permitidos:
-                falla("color fuera de la paleta", hx)
+                falla("color fuera de la paleta", hx,
+                      rf"{re.escape(hx)}(?![\w-])(?![^{{}}<>]*\{{)", fuente)
 
         def rgb_de(h: str) -> tuple[int, ...]:
             return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
@@ -200,10 +226,12 @@ def revisar(ruta: Path) -> int:
             if trio is None or en_paleta(trio):
                 continue
             if funcion.lower().startswith("rgb"):
-                falla("rgb() fuera de la paleta", f"rgb{trio}")
+                falla("rgb() fuera de la paleta", f"rgb{trio}",
+                      rf"\b{funcion}\({re.escape(args)}\)", fuente)
             else:
                 hx = "#" + "".join(f"{c:02X}" for c in trio)
-                falla("hsl() fuera de la paleta", f"{funcion}({args.strip()}) = {hx}")
+                falla("hsl() fuera de la paleta", f"{funcion}({args.strip()}) = {hx}",
+                      rf"\b{funcion}\({re.escape(args)}\)", fuente)
 
         nombres = set()
         for prop, valor in declaraciones(css):
@@ -218,12 +246,14 @@ def revisar(ruta: Path) -> int:
                 print("   nota: sin matplotlib no se revisan los colores con nombre (red, gray…)")
             for nombre in sorted(nombres & tabla.keys()):
                 if tabla[nombre] not in permitidos:
-                    falla("color con nombre fuera de la paleta", nombre)
+                    falla("color con nombre fuera de la paleta", nombre,
+                          rf":[^;{{}}]*(?<![\w#-]){nombre}(?![\w(-])", fuente)
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
     if fam and not usa_familia(doc, fam):
-        falla(f"no se usa {fam}", "es la familia obligatoria")
+        falla(f"no se usa {fam}", "es la familia obligatoria",
+              r"(?<![\w-])font(-family)?\s*:", fuente)
     elif R["tipografia"].get("debe_ir_empotrada"):
         if "@font-face" not in doc:
             falla(f"{fam} no está empotrada",
@@ -237,18 +267,19 @@ def revisar(ruta: Path) -> int:
     for palabra in C["palabras_prohibidas"]:
         if re.search(rf"\b{re.escape(palabra)}\b", texto):
             falla(f"aparece «{palabra}»",
-                  f"el sufijo de millones es {C['sufijo_millones']}")
+                  f"el sufijo de millones es {C['sufijo_millones']}",
+                  rf"\b{re.escape(palabra)}\b(?![^<]*>)", html, 0)
     otro_miles = "." if C["separador_miles"] == "," else ","
     for m in set(re.findall(rf"\$\s?\d{{1,3}}(?:\{otro_miles}\d{{3}})+", texto)):
         falla("separador de miles equivocado",
-              f"{m}  ->  use «{C['separador_miles']}»")
+              f"{m}  ->  use «{C['separador_miles']}»", re.escape(m), html)
     otro_dec = "." if C["separador_decimal"] == "," else ","
     for m in set(re.findall(rf"\d+\{otro_dec}\d+\s?%", texto)):
         falla("separador decimal equivocado en un porcentaje",
-              f"{m}  ->  use «{C['separador_decimal']}»")
+              f"{m}  ->  use «{C['separador_decimal']}»", re.escape(m), html)
     if C["espacio_antes_del_porcentaje"]:
         for m in set(re.findall(r"\d+(?:[.,]\d+)?%", texto)):
-            falla("falta el espacio antes del %", m)
+            falla("falta el espacio antes del %", m, rf"(?<![\d.,]){re.escape(m)}", html)
     if C["signo_antes_del_simbolo"] and re.search(r"\$\s?[-−]\d", texto):
         falla("el signo va después del símbolo",
               f"en negativos va antes: −$73{C['separador_decimal']}9 {C['sufijo_millones']}")
@@ -256,28 +287,31 @@ def revisar(ruta: Path) -> int:
     # ── narrativa ───────────────────────────────────────────────────────────
     if R["narrativa"]["titulos_deben_afirmar"]:
         vagos = tuple(R["narrativa"]["inicios_vagos"])
-        visible = sin_codigo(doc)
         for tag in ("h1", "h2", "h3"):
-            for t in re.findall(rf"<{tag}\b[^>]*>(.*?)</{tag}>", visible, re.S | re.I):
-                limpio = re.sub(r"<[^>]+>", "", t).strip()
+            for m in re.finditer(rf"<{tag}\b[^>]*>(.*?)</{tag}>", html, re.S | re.I):
+                limpio = re.sub(r"<[^>]+>", "", m.group(1)).strip()
                 if limpio and limpio.lower().startswith(vagos):
-                    falla("título que nombra en vez de afirmar", limpio[:70])
+                    hallazgos.append(Hallazgo("título que nombra en vez de afirmar",
+                                              limpio[:70], [html.count("\n", 0, m.start()) + 1]))
 
     # ── diseño plano ────────────────────────────────────────────────────────
     if R["diseno"]["plano"]:
         for prop in R["diseno"]["propiedades_prohibidas"]:
             if prop.endswith("-gradient"):
+                patron = rf"{re.escape(prop)}\s*\("
                 # Un degradado es una FUNCIÓN dentro de otra propiedad
                 # (`background: linear-gradient(...)`), no una propiedad. Buscarlo
                 # como `linear-gradient:` no encuentra nunca nada, y el auditor
                 # daba por limpia una página llena de degradados.
                 usos = re.findall(rf"{re.escape(prop)}\s*\(", css)
             else:
+                patron = rf"(?<![\w-]){re.escape(prop)}\s*:(?!\s*none)"
                 # 'none' es lo contrario: quitar una sombra heredada.
                 usos = [x for x in re.findall(rf"{re.escape(prop)}\s*:\s*([^;}}]+)", css)
                         if "none" not in x.lower()]
             if usos:
-                falla(f"se usa {prop}", f"la casa es de diseño plano ({len(usos)} veces)")
+                falla(f"se usa {prop}", f"la casa es de diseño plano ({len(usos)} veces)",
+                      patron, fuente)
 
     return len(doc)
 
@@ -372,8 +406,8 @@ def main() -> int:
 
     print(f"RESULTADO: {len(hallazgos)} hallazgo(s).")
     por_regla: dict[str, list[str]] = {}
-    for regla, det in hallazgos:
-        por_regla.setdefault(regla, []).append(det)
+    for h in hallazgos:
+        por_regla.setdefault(h[0], []).append(h[1] + _donde(h.lineas))
     for regla, dets in por_regla.items():
         print(f"\n  {regla}  ({len(dets)})")
         for d in dets[:8]:
