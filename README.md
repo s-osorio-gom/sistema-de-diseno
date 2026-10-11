@@ -1,5 +1,7 @@
 # Sistema de diseño para entregables
 
+[![pruebas](https://github.com/s-osorio-gom/sistema-de-diseno/actions/workflows/pruebas.yml/badge.svg)](https://github.com/s-osorio-gom/sistema-de-diseno/actions/workflows/pruebas.yml)
+
 Un solo núcleo de tokens, tres medios que lo consumen y **un auditor que
 falla** cuando un entregable se sale de la línea.
 
