@@ -44,7 +44,20 @@ def test_construir_completo_devuelve_0():
 
 
 def test_la_paleta_de_la_guia_de_tableros_sale_de_los_tokens():
+    # La guía no copia colores (se quedarían viejos al cambiar la marca): pide
+    # roles a T.css_variables. Se comprueba que esos roles existen y que el bloque
+    # generado lleva exactamente los colores de los tokens.
     doc = (RAIZ / "docs" / "tableros.md").read_text(encoding="utf-8")
-    bloque = re.search(r"```css\n:root\{(.*?)\}\n```", doc, re.S).group(1)
-    usados = {h.upper() for h in re.findall(r"#[0-9A-Fa-f]{6}", bloque)}
-    assert usados and usados <= T.paleta_hex(), usados - T.paleta_hex()
+    assert not re.findall(r"#[0-9A-Fa-f]{6}\b", doc)
+    llamada = re.search(r"T\.css_variables\(\[(.*?)\]\)", doc, re.S).group(1)
+    roles = re.findall(r'"(\w+)"', llamada)
+    assert roles and set(roles) <= set(T.tokens()["roles"])
+    css = T.css_variables(roles)
+    for rol in roles:
+        assert f"--{rol.replace('_', '-')}:{T.color(rol)};" in css
+
+
+def test_css_variables_trae_todos_los_roles():
+    css = T.css_variables()
+    assert css.startswith(":root{") and css.endswith("}")
+    assert css.count("--") == len(T.tokens()["roles"])

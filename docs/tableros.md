@@ -115,22 +115,21 @@ específico de un tablero:
 ### Paleta
 Solo los de `nucleo/tokens.json`, pedidos por **rol**. En un tablero se usan pocos:
 
-```css
-:root{
-  --texto:#1B2430;            /* texto, encabezados, dominante */
-  --principal:#2F5DB8;        /* cifra principal, serie principal */
-  --principal-claro:#7FB3E0;  /* series secundarias */
-  --principal-oscuro:#0B2F73; /* encabezados de tabla */
-  --borde:#E6E9ED;            /* paneles, barra de filtros */
-  --texto-secundario:#3C4759; /* texto de apoyo */
-  --acento:#E0A82E;           /* acento cálido, marcar lo destacado */
-  --bien:#2E7D53;             /* texto positivo */
-  --mal:#B23A34;              /* texto negativo */
-}
+```python
+from nucleo import tokens as T
+css = T.css_variables(["texto", "texto_secundario", "principal", "principal_claro",
+                       "principal_oscuro", "borde", "acento", "bien", "mal"])
+# :root{ --texto:…; --texto-secundario:…; --principal:…; … }  va dentro del <style>
 ```
 
-Generar este bloque desde los tokens (`T.color("principal")`, …) en vez de copiarlo
-evita que se desactualice cuando cambie la paleta.
+Para qué sirve cada uno: `texto` (texto, encabezados, dominante), `principal` (cifra
+principal, serie principal), `principal_claro` (series secundarias), `principal_oscuro`
+(encabezados de tabla), `borde` (paneles, barra de filtros), `texto_secundario` (texto de
+apoyo), `acento` (acento cálido, marcar lo destacado), `bien` y `mal` (texto positivo y
+negativo).
+
+El bloque se **genera** desde los tokens, no se copia: copiado, se queda con la paleta
+vieja el día que cambie la marca. Por eso aquí no aparece ningún valor hexadecimal.
 
 Verde y rojo **de texto** van en los tonos `bien` y `mal`, no en los `_claro`: esos son
 fondos, y sobre papel no llegan al contraste mínimo de lectura.

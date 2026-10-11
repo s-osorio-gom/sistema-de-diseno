@@ -1,5 +1,6 @@
 """El auditor: muerde el defectuoso, deja pasar el conforme y no confunde un
 fallo propio con un hallazgo."""
+import colorsys
 import re
 import subprocess
 import sys
@@ -8,10 +9,26 @@ from pathlib import Path
 import pytest
 
 from adaptadores.html import auditar_html as A
+from nucleo import tokens as T
 
 RAIZ = Path(__file__).resolve().parents[1]
 AUDITOR = RAIZ / "adaptadores" / "html" / "auditar_html.py"
 DEFECTUOSO = RAIZ / "ejemplo" / "tablero_con_defectos.html"
+
+
+def con_tokens(html: str) -> str:
+    """Sustituye {{rol}} por el color del rol en tokens.json, en la notación
+    pedida: {{rol}} #RRGGBB · :min minúsculas · :alfa #RRGGBB80 · :rgb rgb(r g b)
+    · :rgba rgba(r,g,b,.5) · :hsl hsl(h s% l%)."""
+    def uno(m):
+        hx = T.color(m.group(1))
+        r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
+        h, luz, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        return {None: hx, "min": hx.lower(), "alfa": hx + "80",
+                "rgb": f"rgb({r} {g} {b})", "rgba": f"rgba({r},{g},{b},.5)",
+                "hsl": f"hsl({h * 360:.1f}deg {sat * 100:.1f}% {luz * 100:.1f}%)",
+                }[m.group(2)]
+    return re.sub(r"\{\{(\w+)(?::(\w+))?\}\}", uno, html)
 
 
 def correr(*args) -> subprocess.CompletedProcess:
@@ -53,9 +70,14 @@ def test_el_detalle_muestra_la_cifra_completa():
     assert any(d.startswith("76.2%") for d in detalles), detalles
 
 
-def test_rgb_de_la_paleta_no_se_reporta():
-    A.revisar(DEFECTUOSO)
-    assert not [d for r, d in A.hallazgos if r.startswith("rgb()")]
+def test_rgb_de_la_paleta_no_se_reporta(tmp_path):
+    # El color sale de los tokens: con otra marca la prueba sigue midiendo lo
+    # mismo (antes leía un rgb fijo del ejemplo y fallaba al cambiar la paleta).
+    f = tmp_path / "x.html"
+    f.write_text(con_tokens("<style id='casa'>body{font-family:Inter}"
+                            "h1{color:{{principal:rgb}}} p{color:{{texto:rgba}}}</style>"
+                            "<h1>Norte supera la meta</h1>"), encoding="utf-8")
+    assert reglas_de(f) == set()
 
 
 def test_revisar_dos_veces_no_acumula():
@@ -114,10 +136,13 @@ VALIDOS = sorted((RAIZ / "tests" / "html" / "validos").glob("*.html"))
 
 
 @pytest.mark.parametrize("ruta", VALIDOS, ids=[r.stem for r in VALIDOS])
-def test_html_valido_no_da_hallazgos(ruta):
-    A.revisar(ruta)
+def test_html_valido_no_da_hallazgos(ruta, tmp_path):
+    # Los colores van como {{rol}} para que la prueba valga con cualquier marca.
+    f = tmp_path / ruta.name
+    f.write_text(con_tokens(ruta.read_text(encoding="utf-8")), encoding="utf-8")
+    A.revisar(f)
     assert A.hallazgos == []
-    assert correr(ruta).returncode == 0
+    assert correr(f).returncode == 0
 
 
 # Cada archivo de tests/html/defectos lleva defectos que el ejemplo no tiene.
