@@ -50,16 +50,37 @@ def falla(regla: str, detalle: str):
     hallazgos.append((regla, detalle))
 
 
+def _vaciar(patron: str, texto: str) -> str:
+    """Quita lo que casa con `patron` pero conserva sus saltos de línea, para que
+    los números de línea de los hallazgos sigan apuntando al archivo original."""
+    return re.sub(patron, lambda m: " " + "\n" * m.group(0).count("\n"), texto,
+                  flags=re.S | re.I)
+
+
+def sin_comentarios(doc: str) -> str:
+    """Un comentario no se ve. `/* antes era #333333 */` no es un color en uso."""
+    return _vaciar(r"<!--.*?-->", doc)
+
+
 def bloque_auditable(doc: str) -> tuple[str, bool]:
+    doc = sin_comentarios(doc)
     m = re.search(r'<style[^>]*id=["\']casa["\'][^>]*>(.*?)</style>', doc, re.S | re.I)
     if m:
-        return m.group(1), True
-    return "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", doc, re.S | re.I)), False
+        css, marcado = m.group(1), True
+    else:
+        css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", doc, re.S | re.I))
+        marcado = False
+    return _vaciar(r"/\*.*?\*/", css), marcado
+
+
+def sin_codigo(doc: str) -> str:
+    """El HTML que se pinta: sin comentarios, <script> ni <style>. Un `'<h2>…'`
+    dentro de un script es código, no un título."""
+    return _vaciar(r"<(script|style)\b[^>]*>.*?</\1\s*>", sin_comentarios(doc))
 
 
 def texto_visible(doc: str) -> str:
-    t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", doc, flags=re.S | re.I)
-    return re.sub(r"<[^>]+>", " ", t)
+    return re.sub(r"<[^>]+>", " ", sin_codigo(doc))
 
 
 def revisar(ruta: Path) -> int:
@@ -138,8 +159,9 @@ def revisar(ruta: Path) -> int:
     # ── narrativa ───────────────────────────────────────────────────────────
     if R["narrativa"]["titulos_deben_afirmar"]:
         vagos = tuple(R["narrativa"]["inicios_vagos"])
+        visible = sin_codigo(doc)
         for tag in ("h1", "h2", "h3"):
-            for t in re.findall(rf"<{tag}[^>]*>(.*?)</{tag}>", doc, re.S | re.I):
+            for t in re.findall(rf"<{tag}\b[^>]*>(.*?)</{tag}>", visible, re.S | re.I):
                 limpio = re.sub(r"<[^>]+>", "", t).strip()
                 if limpio and limpio.lower().startswith(vagos):
                     falla("título que nombra en vez de afirmar", limpio[:70])

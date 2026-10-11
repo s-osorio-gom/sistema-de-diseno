@@ -105,3 +105,15 @@ def test_sombra_none_no_es_hallazgo(tmp_path):
     f.write_text("<style id='casa'>body{font-family:Inter; box-shadow:none}</style>"
                  "<h1>Norte supera la meta</h1>", encoding="utf-8")
     assert reglas_de(f) == set()
+
+
+# HTML válido escrito de formas distintas a como lo escribe el ejemplo: ninguno
+# puede producir hallazgos. Un falso positivo enseña a ignorar el reporte.
+VALIDOS = sorted((RAIZ / "tests" / "html" / "validos").glob("*.html"))
+
+
+@pytest.mark.parametrize("ruta", VALIDOS, ids=[r.stem for r in VALIDOS])
+def test_html_valido_no_da_hallazgos(ruta):
+    A.revisar(ruta)
+    assert A.hallazgos == []
+    assert correr(ruta).returncode == 0
