@@ -317,20 +317,35 @@ def revisar(ruta: Path) -> int:
     return len(doc)
 
 
-def en_navegador(ruta: Path):
-    """Abrirla de verdad. Un `getElementById` a un id que ya no existe deja la
-    página en blanco, y ninguna expresión regular ve eso."""
-    chrome = next((Path(p) for p in (
+def buscar_navegador() -> Path | None:
+    """Chrome o Chromium. AUDITOR_NAVEGADOR=/ruta/al/binario manda sobre todo
+    (sirve para un Chromium portátil, el de Playwright, Edge, Brave…)."""
+    propio = os.environ.get("AUDITOR_NAVEGADOR")
+    if propio:
+        if Path(propio).is_file():
+            return Path(propio)
+        print(f"   AUDITOR_NAVEGADOR apunta a algo que no existe: {propio}")
+        return None
+    fijo = next((Path(p) for p in (
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/usr/bin/google-chrome", "/usr/bin/chromium",
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     ) if Path(p).exists()), None)
+    if fijo:
+        return fijo
+    encontrado = next(filter(None, (shutil.which(n) for n in (
+        "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"))), None)
+    return Path(encontrado) if encontrado else None
+
+
+def en_navegador(ruta: Path):
+    """Abrirla de verdad. Un `getElementById` a un id que ya no existe deja la
+    página en blanco, y ninguna expresión regular ve eso."""
+    chrome = buscar_navegador()
     if not chrome:
-        encontrado = next(filter(None, (shutil.which(n) for n in (
-            "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"))), None)
-        chrome = Path(encontrado) if encontrado else None
-    if not chrome:
-        print("   (no se encontró Chrome: se omite la prueba en navegador)")
+        print("   (no se encontró Chrome: se omite la prueba en navegador;"
+              " indíquelo con AUDITOR_NAVEGADOR=/ruta/al/binario)")
         return
 
     arnes = """
