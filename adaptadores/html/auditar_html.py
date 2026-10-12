@@ -13,14 +13,16 @@ CÓDIGO DE SALIDA
 QUÉ REVISA
     paleta       ningún color fuera de los definidos en nucleo/tokens.json: #hex
                  (3, 4, 6 y 8 dígitos), rgb()/rgba(), hsl()/hsla() y colores con
-                 nombre, en <style>, en style="" y en fill/stroke de SVG.
-                 Comentarios y <script> no se auditan.
+                 nombre, en <style>, en style="" y en fill/stroke/color/bgcolor
+                 de las etiquetas del cuerpo. Comentarios, <script>, cadenas y
+                 texto no se auditan. oklch()/hwb()/lab()/color() se avisan.
     tipografía   la familia obligatoria, y que esté empotrada si así se exige
     cifras       separadores, sufijos, el espacio antes del %, palabras vetadas
     narrativa    títulos que NOMBRAN un tema en vez de AFIRMAR una conclusión
     diseño       sombras y degradados, si la casa es de diseño plano
     navegador    que la página abra, pinte y no lance errores de JavaScript
-                 (Chrome/Chromium; otro binario con AUDITOR_NAVEGADOR=/ruta)
+                 (Chrome/Chromium; otro binario con AUDITOR_NAVEGADOR=/ruta,
+                 que devuelve 2 si no existe)
 
     Cada hallazgo dice su línea en el archivo.
 

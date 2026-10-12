@@ -108,12 +108,15 @@ RESULTADO: 13 hallazgo(s).
 
 ### Qué revisa
 
-- **Paleta.** Ningún color fuera de `tokens.json`, escrito como sea: `#hex` de
-  3, 4, 6 u 8 dígitos (mayúsculas o minúsculas, con o sin alfa), `rgb()`/`rgba()`
-  con números o %, `hsl()`/`hsla()` y colores con nombre (`red`, `darkslategray`).
-  Mira los `<style>`, los `style=""` y los `fill`/`stroke` de SVG. No cuenta lo
-  que está en comentarios ni en `<script>`, ni confunde un selector `#bad` con un
-  color.
+- **Paleta.** Ningún color fuera de `tokens.json` en las notaciones que lee:
+  `#hex` de 3, 4, 6 u 8 dígitos (mayúsculas o minúsculas, con o sin alfa),
+  `rgb()`/`rgba()` con números o %, `hsl()`/`hsla()` (en deg, turn, rad o grad)
+  y colores con nombre (`red`, `darkslategray`). Mira los `<style>`, los
+  `style=""` y los atributos `fill`/`stroke`/`color`/`bgcolor` de las etiquetas
+  del cuerpo, con o sin comillas. No cuenta lo que está en comentarios, en
+  `<script>`, en cadenas (`content:'#1'`) ni en el texto, ni confunde un selector
+  `#bad` con un color. `oklch()`, `hwb()`, `lab()` y `color()` no los convierte:
+  los avisa con su línea («no se pudo leer») para revisarlos a mano.
 - **Tipografía.** Que alguna regla CSS pida la familia obligatoria (en
   `font-family`, `font` o una variable `--fuente`); que la palabra aparezca en el
   texto no basta. Opcionalmente, que esté empotrada.
@@ -127,7 +130,8 @@ RESULTADO: 13 hallazgo(s).
   reporta errores de JavaScript y páginas que quedan en blanco: un
   `getElementById` a un id que ya no existe no lo ve ninguna expresión regular.
   Si no encuentra el navegador, lo dice y omite esa prueba; para usar otro
-  binario (un Chromium portátil, el de Playwright), `AUDITOR_NAVEGADOR=/ruta`.
+  binario (un Chromium portátil, el de Playwright), `AUDITOR_NAVEGADOR=/ruta`;
+  si esa ruta no existe, devuelve 2 (no se pudo auditar).
   El sandbox de Chrome solo se desactiva si se corre como root.
 
 Si la página empotra librerías de terceros, envuelva su propio CSS en
@@ -198,6 +202,15 @@ esas palabras y nadie entiende por qué.
 - **No verifica que los números estén bien.** Audita la forma. Una página puede
   pasar entera y mostrar datos equivocados; eso lo tiene que atrapar un control
   que los recalcule desde la fuente por otro camino.
+- **No lee todas las notaciones de color.** `oklch()`, `oklab()`, `lab()`,
+  `lch()`, `hwb()` y `color(srgb …)` se avisan pero no se comparan con la
+  paleta: el resultado dice «conforme, salvo N color(es) que no se pudieron
+  leer». Los escapes de CSS (`\23 123456`) no se decodifican y pasan sin
+  hallazgo.
+- **La familia obligatoria se busca en cualquier regla.** Un `@font-face` que
+  declara Inter cuenta, aunque el `body` use Arial.
+- **Con `<style id="casa">`, los demás `<style>` no se auditan**, aunque sean
+  suyos.
 - **No ve los colores que pone JavaScript.** Un color dentro de la
   configuración de una librería de gráficas (en un `<script>`) no se audita; solo
   el HTML y el CSS del archivo. `--navegador` detecta errores, no colores.
