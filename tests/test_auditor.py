@@ -256,3 +256,15 @@ def test_atributo_de_color_dice_su_linea_aunque_la_etiqueta_ocupe_dos():
     A.revisar(RAIZ / "tests" / "html" / "defectos" / "mayor_y_menor_dentro_de_atributos.html")
     donde = {d: h.lineas for h in A.hallazgos for _, d in [h]}
     assert donde["#FF0000"] == [4] and donde["#CCCCCC"] == [6] and donde["#ABCDEF"] == [8]
+
+
+def test_color_con_nombre_no_cuenta_lineas_que_no_son_valores(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>\n"     # 1
+                 "<h1>Norte supera la meta</h1><p>Estado: red</p>\n"     # 2 texto
+                 "<p title=\"color=red\">y</p>\n"                        # 3 otro atributo
+                 "<div style=\"color:red\">x</div>\n"                    # 4 valor
+                 "<style>.x{content:'color:red'}</style>\n", encoding="utf-8")  # 5 cadena
+    A.revisar(f)
+    (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
+    assert h.lineas == [4]

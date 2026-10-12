@@ -149,6 +149,39 @@ class _LectorDeAtributos(HTMLParser):
     handle_startendtag = handle_starttag
 
 
+def _tapar(patron: str, texto: str) -> str:
+    """Cambia lo que casa por espacios del mismo largo (posiciones intactas)."""
+    return re.sub(patron, lambda m: re.sub(r"[^\n]", " ", m.group(0)), texto, flags=re.S)
+
+
+def zonas_css(fuente: str, marcado: bool, doc: str) -> list[tuple[int, str]]:
+    """(línea donde empieza, CSS) de lo que se audita: los <style> (solo «casa»
+    si está marcado) y los atributos de color. Sirve para ubicar hallazgos solo
+    donde de verdad hay CSS, no en el texto."""
+    zonas = []
+    for m in re.finditer(r"<style([^>]*)>(.*?)</style\s*>", fuente, re.S | re.I):
+        if marcado and not re.search(r'id=["\']casa["\']', m.group(1), re.I):
+            continue
+        zonas.append((fuente.count("\n", 0, m.start(2)) + 1, m.group(2)))
+    zonas += [(n, "{" + r + "}") for n, r in atributos_de_color(doc)]
+    return zonas
+
+
+def lineas_de_nombre(nombre: str, zonas: list[tuple[int, str]]) -> list[int]:
+    """Líneas donde `nombre` es parte del VALOR de una propiedad de color. No
+    cuentan el texto («Estado: red»), otros atributos (title="color=red") ni
+    las cadenas (content:'red')."""
+    lineas = []
+    for inicio, css in zonas:
+        css = _tapar(r"url\([^)]*\)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|var\([^)]*\)", css)
+        for d in re.finditer(r"(?<![\w-])(-*[a-zA-Z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|\Z)", css):
+            if not PROP_DE_COLOR.match(d.group(1).lower()):
+                continue
+            for w in re.finditer(rf"(?<![\w#-]){re.escape(nombre)}(?![\w(-])", d.group(2), re.I):
+                lineas.append(inicio + css.count("\n", 0, d.start(2) + w.start()))
+    return lineas
+
+
 def atributos_de_color(doc: str) -> list[tuple[int, str]]:
     """(línea, declaración) de los style="" y atributos de color de las etiquetas,
     fuera de comentarios y <script>. El texto visible nunca cuenta."""
@@ -298,6 +331,7 @@ def revisar(ruta: Path) -> int:
                 falla("hsl() fuera de la paleta", f"{funcion}({args.strip()}) = {hx}",
                       rf"\b{funcion}\({re.escape(args)}\)", fuente)
 
+        zonas = zonas_css(fuente, marcado, doc)
         nombres = set()
         for prop, valor in declaraciones(css):
             if PROP_DE_COLOR.match(prop):
@@ -311,14 +345,8 @@ def revisar(ruta: Path) -> int:
                 print("   nota: sin matplotlib no se revisan los colores con nombre (red, gray…)")
             for nombre in sorted(nombres & tabla.keys()):
                 if tabla[nombre] not in permitidos:
-                    # Cada aparición como VALOR (tras «:» de una declaración o
-                    # «=» de un atributo), aunque el valor siga en otra línea.
-                    lineas = [fuente.count("\n", 0, m.start()) + 1 for m in re.finditer(
-                        rf"(?<![\w#-]){nombre}(?![\w(-])", fuente, re.I)
-                        if re.search(r"(:[^;{}<>\"']*|=\s*[\"']?)$",
-                                     fuente[max(0, m.start() - 300):m.start()])]
-                    hallazgos.append(Hallazgo("color con nombre fuera de la paleta",
-                                              nombre, lineas))
+                    hallazgos.append(Hallazgo("color con nombre fuera de la paleta", nombre,
+                                              lineas_de_nombre(nombre, zonas)))
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
