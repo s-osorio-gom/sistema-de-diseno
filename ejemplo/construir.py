@@ -105,15 +105,23 @@ def tablero(ruta: Path):
   .cifra {{ font-size:{T.pt('cifra')}px; font-weight:{T.peso('cifra')};
             color:{c('principal')}; line-height:1; }}
   .rotulo {{ font-size:{T.pt('apoyo')}px; color:{c('texto_secundario')}; }}
-  table {{ border-collapse:collapse; margin-top:22px; font-size:{T.pt('cuerpo')}px; }}
+  table {{ border-collapse:collapse; margin-top:22px; font-size:{T.pt('cuerpo')}px;
+           background:#FFFFFF; }}
   th {{ background:{c('principal_oscuro')}; color:#FFFFFF; text-align:left;
         padding:8px 14px; font-size:{T.pt('apoyo')}px; font-weight:600; }}
   td {{ padding:7px 14px; border-bottom:1px solid {c('borde')}; }}
   tr:nth-child(even) td {{ background:{c('fondo')}; }}
   .num {{ text-align:right; font-variant-numeric:tabular-nums; }}
-  .pill {{ display:inline-block; padding:2px 10px; border-radius:10px;
+  th.num {{ text-align:right; }}
+  .pill {{ display:inline-block; padding:2px 10px; border-radius:10px; white-space:nowrap;
            font-size:{T.pt('nota')+1}px; font-weight:600; }}
   .nota {{ margin-top:20px; font-size:{T.pt('nota')}px; color:{c('texto_secundario')}; }}
+  /* En un teléfono (~390 px) el relleno de escritorio empuja la tabla fuera de la
+     pantalla; se recorta para que quepa sin desplazamiento lateral. */
+  @media (max-width: 480px) {{
+    body {{ padding:16px; }}
+    th, td {{ padding-left:8px; padding-right:8px; }}
+  }}
 </style></head>
 <body>
   <h1>Oriente es la única región por debajo del 80 %</h1>
@@ -121,8 +129,9 @@ def tablero(ruta: Path):
   <div class="cifra">{entero(total)}</div>
   <div class="rotulo">clientes atendidos en el periodo</div>
   <table>
-    <tr><th>Región</th><th>Cumplimiento</th><th>Clientes</th><th>Estado</th></tr>
-    {filas}
+    <thead><tr><th scope="col">Región</th><th scope="col" class="num">Cumplimiento</th>
+      <th scope="col" class="num">Clientes</th><th scope="col">Estado</th></tr></thead>
+    <tbody>{filas}</tbody>
   </table>
   <div class="nota">Generado desde nucleo/tokens.json. Ningún color escrito a mano.</div>
 </body></html>"""

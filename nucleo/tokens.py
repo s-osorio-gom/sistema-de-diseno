@@ -70,3 +70,14 @@ def paleta_hex() -> set[str]:
     return {v.upper() for v in tokens()["paleta"].values()} | {
         c.upper() for s in tokens()["series"].values()
         for c in (s.values() if isinstance(s, dict) else s)}
+
+
+def css_variables(roles: list[str] | None = None) -> str:
+    """El bloque `:root{--rol:#hex; …}` para un HTML, generado desde los roles.
+
+    Copiarlo a mano es lo que hace que un tablero se quede con la paleta vieja
+    cuando la marca cambia; generarlo no.
+    """
+    nombres = roles or list(tokens()["roles"])
+    filas = "".join(f"  --{r.replace('_', '-')}:{color(r)};\n" for r in nombres)
+    return ":root{\n" + filas + "}"

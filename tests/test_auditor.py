@@ -1,5 +1,8 @@
 """El auditor: muerde el defectuoso, deja pasar el conforme y no confunde un
 fallo propio con un hallazgo."""
+import colorsys
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -7,10 +10,27 @@ from pathlib import Path
 import pytest
 
 from adaptadores.html import auditar_html as A
+from nucleo import tokens as T
 
 RAIZ = Path(__file__).resolve().parents[1]
 AUDITOR = RAIZ / "adaptadores" / "html" / "auditar_html.py"
 DEFECTUOSO = RAIZ / "ejemplo" / "tablero_con_defectos.html"
+
+
+def con_tokens(html: str) -> str:
+    """Sustituye {{rol}} por el color del rol en tokens.json, en la notación
+    pedida: {{rol}} #RRGGBB · :min minúsculas · :alfa #RRGGBB80 · :rgb rgb(r g b)
+    · :rgbc rgb(r, g, b) · :rgba rgba(r,g,b,.5) · :hsl hsl(h s% l%)."""
+    def uno(m):
+        hx = T.color(m.group(1))
+        r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
+        h, luz, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        return {None: hx, "min": hx.lower(), "alfa": hx + "80",
+                "rgb": f"rgb({r} {g} {b})", "rgba": f"rgba({r},{g},{b},.5)",
+                "rgbc": f"rgb({r}, {g}, {b})",
+                "hsl": f"hsl({h * 360:.1f}deg {sat * 100:.1f}% {luz * 100:.1f}%)",
+                }[m.group(2)]
+    return re.sub(r"\{\{(\w+)(?::(\w+))?\}\}", uno, html)
 
 
 def correr(*args) -> subprocess.CompletedProcess:
@@ -52,9 +72,17 @@ def test_el_detalle_muestra_la_cifra_completa():
     assert any(d.startswith("76.2%") for d in detalles), detalles
 
 
-def test_rgb_de_la_paleta_no_se_reporta():
-    A.revisar(DEFECTUOSO)
-    assert not [d for r, d in A.hallazgos if r.startswith("rgb()")]
+def test_rgb_de_la_paleta_no_se_reporta(tmp_path):
+    # El color sale de los tokens: con otra marca la prueba sigue midiendo lo
+    # mismo (antes leía un rgb fijo del ejemplo y fallaba al cambiar la paleta).
+    f = tmp_path / "x.html"
+    f.write_text(con_tokens("<style id='casa'>body{font-family:Inter}"
+                            "h1{color:{{principal:rgb}}} p{color:{{texto:rgba}}}"
+                            "h2{color:{{principal_oscuro:rgbc}}}"
+                            ".caja{border-color:rgba(0,0,0,.2)}</style>"
+                            "<h1>Norte supera la meta</h1>"), encoding="utf-8")
+    assert reglas_de(f) == set()
+    assert A.sin_leer == []          # se leyeron, no se dejaron pasar sin leer
 
 
 def test_revisar_dos_veces_no_acumula():
@@ -105,3 +133,162 @@ def test_sombra_none_no_es_hallazgo(tmp_path):
     f.write_text("<style id='casa'>body{font-family:Inter; box-shadow:none}</style>"
                  "<h1>Norte supera la meta</h1>", encoding="utf-8")
     assert reglas_de(f) == set()
+
+
+# HTML válido escrito de formas distintas a como lo escribe el ejemplo: ninguno
+# puede producir hallazgos. Un falso positivo enseña a ignorar el reporte.
+VALIDOS = sorted((RAIZ / "tests" / "html" / "validos").glob("*.html"))
+
+
+@pytest.mark.parametrize("ruta", VALIDOS, ids=[r.stem for r in VALIDOS])
+def test_html_valido_no_da_hallazgos(ruta, tmp_path):
+    # Los colores van como {{rol}} para que la prueba valga con cualquier marca.
+    f = tmp_path / ruta.name
+    f.write_text(con_tokens(ruta.read_text(encoding="utf-8")), encoding="utf-8")
+    A.revisar(f)
+    assert A.hallazgos == []
+    assert correr(f).returncode == 0
+
+
+# Cada archivo de tests/html/defectos lleva defectos que el ejemplo no tiene.
+# archivo -> {regla: detalles que deben aparecer (vacío = basta la regla)}
+DEFECTOS = {
+    "color_en_hover_y_media": {"color fuera de la paleta": {"#123456", "#ABCDEF"}},
+    "hex_invalido": {"color fuera de la paleta": {"#1B243"}},
+    "familia_solo_en_el_texto": {"no se usa Inter": set()},
+    "color_con_nombre": {"color con nombre fuera de la paleta": {"darkslategray",
+                                                                "lightyellow"}},
+    "hsl": {"hsl() fuera de la paleta": set()},
+    "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
+    "estilo_en_linea_y_svg": {"color fuera de la paleta": {"#FF00FF", "#123456", "#00FF00"}},
+    "atributos_sin_comillas": {"color fuera de la paleta": {"#FF0000", "#00FF00"}},
+    "mayor_y_menor_dentro_de_atributos": {
+        "color fuera de la paleta": {"#FF0000", "#00FF00", "#CCCCCC", "#ABCDEF"}},
+    # El valor convertido se exige exacto: un factor de rad o grad erróneo falla.
+    "hsl_en_radianes": {"hsl() fuera de la paleta": {"hsl(1rad 100% 50%) = #FFF400",
+                                                      "hsl(200grad 60% 40%) = #29A3A3"}},
+    "nombre_en_filter_y_background_image": {
+        "color con nombre fuera de la paleta": {"red", "tomato", "olive"}},
+}
+
+
+@pytest.mark.parametrize(("nombre", "esperado"), DEFECTOS.items(), ids=list(DEFECTOS))
+def test_html_con_defectos_se_detecta(nombre, esperado):
+    ruta = RAIZ / "tests" / "html" / "defectos" / f"{nombre}.html"
+    A.revisar(ruta)
+    for regla, detalles in esperado.items():
+        hallados = {d for r, d in A.hallazgos if r == regla}
+        assert hallados, f"{regla!r} no se reportó: {A.hallazgos}"
+        assert detalles <= hallados, detalles - hallados
+    assert correr(ruta).returncode == 1
+
+
+def test_cada_archivo_de_defectos_tiene_su_expectativa():
+    archivos = {r.stem for r in (RAIZ / "tests" / "html" / "defectos").glob("*.html")}
+    assert archivos == set(DEFECTOS)
+
+
+def test_cada_defecto_del_ejemplo_dice_su_linea():
+    # La línea de cada defecto es la que lleva su marca «N.» en el archivo.
+    lineas = DEFECTUOSO.read_text(encoding="utf-8").splitlines()
+    marca = {n: i for i, t in enumerate(lineas, 1) for n in range(1, 12)
+             if re.search(rf"(/\*|<!--|y) {n}\. ", t)}
+    A.revisar(DEFECTUOSO)
+    donde = {(r, d): h.lineas for h in A.hallazgos for r, d in [h]}
+    esperado = {
+        ("no se usa Inter", "es la familia obligatoria"): 1,
+        ("color fuera de la paleta", "#EFEFEF"): 2,
+        ("color fuera de la paleta", "#333333"): 3,
+        ("título que nombra en vez de afirmar", "Comparación de indicadores por región"): 6,
+        ("separador de miles equivocado", "$1,240,000  ->  use «.»"): 7,
+        ("separador decimal equivocado en un porcentaje", "76.2%  ->  use «,»"): 9,
+        ("falta el espacio antes del %", "76.2%"): 10,
+    }
+    for clave, n in esperado.items():
+        assert donde[clave] == [marca[n]], (clave, donde[clave], marca[n])
+    assert [h.lineas for h in A.hallazgos if h[0] == "se usa box-shadow"] == [[marca[4]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "se usa linear-gradient"] == [[marca[5]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "aparece «MM»"] == [[marca[11]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "aparece «COP»"] == [[marca[8]]]
+
+
+def test_el_reporte_imprime_la_linea():
+    assert "#333333  (línea 11)" in correr(DEFECTUOSO).stdout
+
+
+def test_color_que_no_sabe_leer_se_avisa(tmp_path):
+    # oklch(), hwb(), color()… no se convierten: no pueden pasar en silencio.
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}\n.a{color:oklch(60% 0.2 30)}"
+                 ".b{color:hwb(120 0% 0%)}\n.c{color:color(srgb 1 0 0)}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    salida = correr(f).stdout
+    assert "no se pudo leer" in salida
+    assert "conforme, salvo 3 color(es) que no se pudieron leer" in salida
+    for c in ("oklch(60% 0.2 30)", "hwb(120 0% 0%)", "color(srgb 1 0 0)"):
+        assert c in salida, salida
+
+
+def test_color_con_nombre_dice_todas_sus_lineas(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>\n"   # 1
+                 "<h1>Norte supera la meta</h1>\n"                     # 2
+                 "<p><font color=\"red\">x</font></p>\n"              # 3
+                 "<div style=\"color:red\">x</div>\n"                  # 4
+                 "<div style=\"color:\n"                               # 5
+                 " red\">x</div>\n", encoding="utf-8")                 # 6
+    A.revisar(f)
+    (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
+    assert h.lineas == [3, 4, 6]
+
+
+def test_navegador_indicado_que_no_existe_devuelve_2(tmp_path):
+    # Se pidió auditar en navegador y no se pudo: no es «conforme».
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(AUDITOR), str(f), "--navegador"],
+                       capture_output=True, text=True, encoding="utf-8", check=False,
+                       env={**os.environ, "AUDITOR_NAVEGADOR": str(tmp_path / "no_existe")})
+    assert r.returncode == 2, r.stdout
+    assert "AUDITOR_NAVEGADOR" in r.stdout + r.stderr
+
+
+def test_atributo_de_color_dice_su_linea_aunque_la_etiqueta_ocupe_dos():
+    A.revisar(RAIZ / "tests" / "html" / "defectos" / "mayor_y_menor_dentro_de_atributos.html")
+    donde = {d: h.lineas for h in A.hallazgos for _, d in [h]}
+    assert donde["#FF0000"] == [4] and donde["#CCCCCC"] == [6] and donde["#ABCDEF"] == [8]
+
+
+def test_color_con_nombre_no_cuenta_lineas_que_no_son_valores(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>\n"     # 1
+                 "<h1>Norte supera la meta</h1><p>Estado: red</p>\n"     # 2 texto
+                 "<p title=\"color=red\">y</p>\n"                        # 3 otro atributo
+                 "<div style=\"color:red\">x</div>\n"                    # 4 valor
+                 "<style>.x{content:'color:red'}</style>\n", encoding="utf-8")  # 5 cadena
+    A.revisar(f)
+    (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
+    assert h.lineas == [4]
+
+
+def test_tolerancia_de_un_punto_por_canal(tmp_path):
+    # ±1 por redondeo se acepta; a 2 puntos ya es otro color.
+    r, g, b = (int(T.color("principal")[i:i + 2], 16) for i in (1, 3, 5))
+    r1, r2 = (r + 1, r + 2) if r < 254 else (r - 1, r - 2)
+    f = tmp_path / "x.html"
+    f.write_text(f"<style id='casa'>body{{font-family:Inter}} .a{{color:rgb({r1}, {g}, {b})}}"
+                 "</style><h1>Norte supera la meta</h1>", encoding="utf-8")
+    assert reglas_de(f) == set()
+    f.write_text(f"<style id='casa'>body{{font-family:Inter}} .a{{color:rgb({r2}, {g}, {b})}}"
+                 "</style><h1>Norte supera la meta</h1>", encoding="utf-8")
+    assert reglas_de(f) == {"rgb() fuera de la paleta"}
+
+
+def test_rgb_ilegible_se_avisa(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter} .a{color:rgb(rojo 0 0)}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    A.revisar(f)
+    assert A.sin_leer == ["rgb(rojo 0 0)"]
+    assert "no se pudo leer el color rgb(rojo 0 0)" in correr(f).stdout

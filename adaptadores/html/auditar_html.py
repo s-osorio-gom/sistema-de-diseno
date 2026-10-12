@@ -11,12 +11,20 @@ CÓDIGO DE SALIDA
     se cae no se confunda con uno que encontró defectos.
 
 QUÉ REVISA
-    paleta       ningún color fuera de los definidos en nucleo/tokens.json
+    paleta       ningún color fuera de los definidos en nucleo/tokens.json: #hex
+                 (3, 4, 6 y 8 dígitos), rgb()/rgba(), hsl()/hsla() y colores con
+                 nombre, en <style>, en style="" y en fill/stroke/color/bgcolor
+                 de las etiquetas del cuerpo. Comentarios, <script>, cadenas y
+                 texto no se auditan. oklch()/hwb()/lab()/color() se avisan.
     tipografía   la familia obligatoria, y que esté empotrada si así se exige
     cifras       separadores, sufijos, el espacio antes del %, palabras vetadas
     narrativa    títulos que NOMBRAN un tema en vez de AFIRMAR una conclusión
     diseño       sombras y degradados, si la casa es de diseño plano
     navegador    que la página abra, pinte y no lance errores de JavaScript
+                 (Chrome/Chromium; otro binario con AUDITOR_NAVEGADOR=/ruta,
+                 que devuelve 2 si no existe; espera AUDITOR_NAVEGADOR_ESPERA s)
+
+    Cada hallazgo dice su línea en el archivo.
 
 QUÉ NO REVISA
     Si los NÚMEROS están bien. Eso exige un control que los recalcule desde la
@@ -28,42 +36,229 @@ QUÉ NO REVISA
    <style id="casa">…</style> y se auditará solo ese. Sin la marca se audita
    todo y se reportan violaciones ajenas: son ruido, y hacen que nadie vuelva a
    mirar el reporte.
+   Los style="" y los atributos de color de SVG del cuerpo se auditan siempre.
 """
 from __future__ import annotations
 
 import argparse
+import colorsys
+import math
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ))
 from nucleo import tokens as T  # noqa: E402
 
-hallazgos: list[tuple[str, str]] = []
+
+class Hallazgo(tuple):
+    """El par (regla, detalle) de siempre, más `.lineas`: dónde está en el archivo."""
+
+    def __new__(cls, regla: str, detalle: str, lineas=()):
+        h = super().__new__(cls, (regla, detalle))
+        h.lineas = sorted(set(lineas))
+        return h
 
 
-def falla(regla: str, detalle: str):
-    hallazgos.append((regla, detalle))
+hallazgos: list[Hallazgo] = []
+sin_leer: list[str] = []          # colores que el auditor no sabe convertir
+
+
+def falla(regla: str, detalle: str, patron: str | None = None, en: str = "",
+          flags=re.I):
+    """Registra un hallazgo. `patron` (regex) se busca en `en` —un texto con los
+    mismos saltos de línea que el archivo— para decir en qué líneas está."""
+    lineas = ([en.count("\n", 0, m.start()) + 1 for m in re.finditer(patron, en, flags)]
+              if patron else [])
+    hallazgos.append(Hallazgo(regla, detalle, lineas))
+
+
+def _donde(lineas: list[int]) -> str:
+    if not lineas:
+        return ""
+    txt = ", ".join(map(str, lineas[:5])) + ("…" if len(lineas) > 5 else "")
+    return f"  (línea{'s' if len(lineas) > 1 else ''} {txt})"
+
+
+def _vaciar(patron: str, texto: str) -> str:
+    """Quita lo que casa con `patron` pero conserva sus saltos de línea, para que
+    los números de línea de los hallazgos sigan apuntando al archivo original."""
+    return re.sub(patron, lambda m: " " + "\n" * m.group(0).count("\n"), texto,
+                  flags=re.S | re.I)
+
+
+def sin_comentarios(doc: str) -> str:
+    """Un comentario no se ve. `/* antes era #333333 */` no es un color en uso."""
+    return _vaciar(r"<!--.*?-->", doc)
 
 
 def bloque_auditable(doc: str) -> tuple[str, bool]:
+    doc = sin_comentarios(doc)
     m = re.search(r'<style[^>]*id=["\']casa["\'][^>]*>(.*?)</style>', doc, re.S | re.I)
     if m:
-        return m.group(1), True
-    return "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", doc, re.S | re.I)), False
+        css, marcado = m.group(1), True
+    else:
+        css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", doc, re.S | re.I))
+        marcado = False
+    return _vaciar(r"/\*.*?\*/", css), marcado
+
+
+def declaraciones(css: str) -> list[tuple[str, str]]:
+    """Pares (propiedad, valor) de las declaraciones (`color: #1B2430`). En un
+    selector, `#bad` o `#add` son ids, no colores: por eso solo se miran valores."""
+    return [(m.group(1).lower(), m.group(2)) for m in re.finditer(
+        r"(?<![\w-])(-*[a-zA-Z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|\Z)", css)]
+
+
+def valores(css: str) -> str:
+    # url(#fade) es una referencia a un id, y content:'Ref #ABC' es texto: ninguno
+    # es un color.
+    return "\n".join(re.sub(r"url\([^)]*\)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'", " ", v)
+                     for _, v in declaraciones(css))
+
+
+ATRIBUTOS_DE_COLOR = ("style", "fill", "stroke", "stop-color", "flood-color", "color", "bgcolor")
+
+
+class _LectorDeAtributos(HTMLParser):
+    """Lee las etiquetas con el parser de la biblioteca estándar: respeta las
+    comillas (`title="a > b"` no corta la etiqueta), acepta valores sin comillas
+    y decodifica entidades. Guarda (línea, declaración CSS) de cada atributo de
+    color. <link> y <meta> no pintan (`<link rel="mask-icon" color="…">`)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.reglas: list[tuple[int, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("link", "meta"):
+            return
+        linea, crudo = self.getpos()[0], self.get_starttag_text() or ""
+        for nombre, valor in attrs:
+            if nombre in ATRIBUTOS_DE_COLOR and valor:
+                m = re.search(rf"\s{re.escape(nombre)}\s*=", crudo, re.I)
+                n = linea + (crudo[:m.start()].count("\n") if m else 0)
+                self.reglas.append((n, valor if nombre == "style" else f"{nombre}:{valor}"))
+
+    handle_startendtag = handle_starttag
+
+
+def _tapar(patron: str, texto: str) -> str:
+    """Cambia lo que casa por espacios del mismo largo (posiciones intactas)."""
+    return re.sub(patron, lambda m: re.sub(r"[^\n]", " ", m.group(0)), texto, flags=re.S)
+
+
+def zonas_css(fuente: str, marcado: bool, doc: str) -> list[tuple[int, str]]:
+    """(línea donde empieza, CSS) de lo que se audita: los <style> (solo «casa»
+    si está marcado) y los atributos de color. Sirve para ubicar hallazgos solo
+    donde de verdad hay CSS, no en el texto."""
+    zonas = []
+    for m in re.finditer(r"<style([^>]*)>(.*?)</style\s*>", fuente, re.S | re.I):
+        if marcado and not re.search(r'id=["\']casa["\']', m.group(1), re.I):
+            continue
+        zonas.append((fuente.count("\n", 0, m.start(2)) + 1, m.group(2)))
+    zonas += [(n, "{" + r + "}") for n, r in atributos_de_color(doc)]
+    return zonas
+
+
+def lineas_de_nombre(nombre: str, zonas: list[tuple[int, str]]) -> list[int]:
+    """Líneas donde `nombre` es parte del VALOR de una propiedad de color. No
+    cuentan el texto («Estado: red»), otros atributos (title="color=red") ni
+    las cadenas (content:'red')."""
+    lineas = []
+    for inicio, css in zonas:
+        css = _tapar(r"url\([^)]*\)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|var\([^)]*\)", css)
+        for d in re.finditer(r"(?<![\w-])(-*[a-zA-Z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|\Z)", css):
+            if not PROP_DE_COLOR.match(d.group(1).lower()):
+                continue
+            for w in re.finditer(rf"(?<![\w#-]){re.escape(nombre)}(?![\w(-])", d.group(2), re.I):
+                lineas.append(inicio + css.count("\n", 0, d.start(2) + w.start()))
+    return lineas
+
+
+def atributos_de_color(doc: str) -> list[tuple[int, str]]:
+    """(línea, declaración) de los style="" y atributos de color de las etiquetas,
+    fuera de comentarios y <script>. El texto visible nunca cuenta."""
+    lector = _LectorDeAtributos()
+    lector.feed(sin_codigo(doc))
+    lector.close()
+    return lector.reglas
+
+
+def css_en_linea(doc: str) -> str:
+    """Lo que se pinta desde el HTML (style="", fill, stroke, color, bgcolor…)
+    como reglas CSS, para auditarlo junto con los <style>."""
+    return "\n".join("{" + r + "}" for _, r in atributos_de_color(doc))
+
+
+# Propiedades donde una palabra suelta puede ser un color con nombre («red»).
+PROP_DE_COLOR = re.compile(
+    r"^(--.*|.*color|background(-image)?|border(-[a-z-]+)?|outline|fill|stroke|"
+    r"text-decoration|column-rule|box-shadow|text-shadow|filter|backdrop-filter)$")
+
+
+def colores_con_nombre() -> dict[str, str]:
+    """Los 148 colores con nombre de CSS -> hex. Se toman de matplotlib, que ya
+    es dependencia, en vez de copiar la tabla aquí."""
+    from matplotlib.colors import CSS4_COLORS
+    return {k.lower(): v.upper() for k, v in CSS4_COLORS.items()}
+
+
+def a_rgb(funcion: str, args: str) -> tuple[int, int, int] | None:
+    """rgb()/rgba() con números o %, y hsl()/hsla() con o sin `deg`, a (r, g, b).
+    None si no se puede leer (p. ej. lleva var())."""
+    partes = [x for x in re.split(r"[\s,/]+", args.strip()) if x][:3]
+    if len(partes) < 3 or "var" in args:
+        return None
+    try:
+        if funcion.startswith("rgb"):
+            return tuple(round(float(x[:-1]) * 2.55) if x.endswith("%") else round(float(x))
+                         for x in partes)
+        h, sat, luz = partes
+        por_unidad = {"turn": 360, "grad": 0.9, "rad": 180 / math.pi, "deg": 1}
+        unidad = next((u for u in por_unidad if h.endswith(u)), "")
+        h = float(h.removesuffix(unidad)) * por_unidad.get(unidad, 1)
+        r, g, b = colorsys.hls_to_rgb((h % 360) / 360, float(luz.rstrip("%")) / 100,
+                                      float(sat.rstrip("%")) / 100)
+        return round(r * 255), round(g * 255), round(b * 255)
+    except ValueError:
+        return None
+
+
+def usa_familia(doc: str, familia: str) -> bool:
+    """¿Alguna regla CSS pide la familia? Se mira en font-family, font y en las
+    propiedades personalizadas (`--fuente: 'Inter', …` usada con var()). Que la
+    palabra aparezca en el texto («Internet») no cuenta, y en CSS los nombres de
+    familia no distinguen mayúsculas."""
+    limpio = sin_comentarios(doc)
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", limpio, re.S | re.I))
+    css = _vaciar(r"/\*.*?\*/", css)
+    css += "\n" + "\n".join(m.group(2) for m in re.finditer(
+        r"\sstyle\s*=\s*([\"'])(.*?)\1", sin_codigo(doc), re.S | re.I))
+    nombre = re.compile(rf"(?<![\w-]){re.escape(familia)}(?![\w-])", re.I)
+    return any(nombre.search(m.group(1)) for m in re.finditer(
+        r"(?<![\w-])(?:font-family|font|--[\w-]+)\s*:\s*([^;{}]*)", css, re.I))
+
+
+def sin_codigo(doc: str) -> str:
+    """El HTML que se pinta: sin comentarios, <script> ni <style>. Un `'<h2>…'`
+    dentro de un script es código, no un título."""
+    return _vaciar(r"<(script|style)\b[^>]*>.*?</\1\s*>", sin_comentarios(doc))
 
 
 def texto_visible(doc: str) -> str:
-    t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", doc, flags=re.S | re.I)
-    return re.sub(r"<[^>]+>", " ", t)
+    return re.sub(r"<[^>]+>", " ", sin_codigo(doc))
 
 
 def revisar(ruta: Path) -> int:
     hallazgos.clear()
+    sin_leer.clear()
     R = T.reglas()
     doc = ruta.read_text(encoding="utf-8", errors="replace")
 
@@ -76,36 +271,88 @@ def revisar(ruta: Path) -> int:
               f"{abiertos} <style> abiertos y {cerrados} cerrados: el CSS no se puede auditar")
 
     css, marcado = bloque_auditable(doc)
+    # Para ubicar hallazgos: el archivo sin comentarios (mismas líneas).
+    fuente = _vaciar(r"/\*.*?\*/", sin_comentarios(doc))
+    html = sin_codigo(doc)
+    css += "\n" + css_en_linea(doc)
     if not marcado:
         print('   nota: no hay <style id="casa">; se audita TODO el CSS de la página.')
 
     # ── paleta ──────────────────────────────────────────────────────────────
     if R["colores"]["solo_de_la_paleta"]:
         permitidos = T.paleta_hex() | {c.upper() for c in R["colores"]["permitidos_extra"]}
-        for hx in sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}\b", css))):
+        en_uso = valores(css)
+        for hx in sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}\b", en_uso))):
             h = hx.upper()
+            if len(h) in (4, 5):                  # #ABC y #ABCD -> #AABBCC(DD)
+                h = "#" + "".join(c * 2 for c in h[1:])
             if len(h) == 9:                       # #RRGGBBAA: se compara sin alfa
                 h = h[:7]
-            if len(h) == 4:                       # #ABC -> #AABBCC
-                h = "#" + "".join(c * 2 for c in h[1:])
             if h not in permitidos:
-                falla("color fuera de la paleta", hx)
+                falla("color fuera de la paleta", hx,
+                      rf"{re.escape(hx)}(?![\w-])(?![^{{}}<>]*\{{)", fuente)
 
-        validos = {tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
-                   for h in T.paleta_hex()} | {(255, 255, 255), (0, 0, 0)}
-        for r, g, b in set(re.findall(
-                r"rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)", css)):
-            try:
-                trio = (int(float(r)), int(float(g)), int(float(b)))
-            except ValueError:
+        def rgb_de(h: str) -> tuple[int, ...]:
+            return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+        validos = {rgb_de(h) for h in permitidos if len(h) == 7}
+
+        def en_paleta(trio) -> bool:
+            # ±1 por canal: hsl() y los % no caen exacto en un entero al convertir.
+            return any(all(abs(a - b) <= 1 for a, b in zip(trio, v, strict=True))
+                       for v in validos)
+
+        def no_se_pudo_leer(texto: str):
+            # No es un hallazgo (puede ser de la paleta), pero tampoco puede pasar
+            # en silencio: se avisa con su línea para revisarlo a mano.
+            lineas = [fuente.count("\n", 0, m.start()) + 1
+                      for m in re.finditer(re.escape(texto), fuente, re.I)]
+            sin_leer.append(texto)
+            print(f"   nota: no se pudo leer el color {texto}{_donde(lineas)}:"
+                  " revíselo a mano")
+
+        for funcion, args in sorted(set(re.findall(
+                r"\b(oklch|oklab|lch|lab|hwb|color)\(([^)]*)\)", en_uso, re.I))):
+            no_se_pudo_leer(f"{funcion}({args})")
+
+        for funcion, args in sorted(set(re.findall(r"\b(rgba?|hsla?)\(([^)]*)\)", en_uso, re.I))):
+            trio = a_rgb(funcion.lower(), args)
+            if trio is None:
+                if "var" not in args:        # con var() el valor sale de otra regla
+                    no_se_pudo_leer(f"{funcion}({args})")
                 continue
-            if trio not in validos:
-                falla("rgb() fuera de la paleta", f"rgb{trio}")
+            if en_paleta(trio):
+                continue
+            if funcion.lower().startswith("rgb"):
+                falla("rgb() fuera de la paleta", f"rgb{trio}",
+                      rf"\b{funcion}\({re.escape(args)}\)", fuente)
+            else:
+                hx = "#" + "".join(f"{c:02X}" for c in trio)
+                falla("hsl() fuera de la paleta", f"{funcion}({args.strip()}) = {hx}",
+                      rf"\b{funcion}\({re.escape(args)}\)", fuente)
+
+        zonas = zonas_css(fuente, marcado, doc)
+        nombres = set()
+        for prop, valor in declaraciones(css):
+            if PROP_DE_COLOR.match(prop):
+                valor = re.sub(r"url\([^)]*\)|([\"']).*?\1|var\([^)]*\)", " ", valor)
+                nombres |= {w.lower() for w in re.findall(r"(?<![\w#-])[a-zA-Z]+(?![\w(-])", valor)}
+        if nombres:
+            try:
+                tabla = colores_con_nombre()
+            except ImportError:
+                tabla = {}
+                print("   nota: sin matplotlib no se revisan los colores con nombre (red, gray…)")
+            for nombre in sorted(nombres & tabla.keys()):
+                if tabla[nombre] not in permitidos:
+                    hallazgos.append(Hallazgo("color con nombre fuera de la paleta", nombre,
+                                              lineas_de_nombre(nombre, zonas)))
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
-    if fam and fam not in doc:
-        falla(f"no se usa {fam}", "es la familia obligatoria")
+    if fam and not usa_familia(doc, fam):
+        falla(f"no se usa {fam}", "es la familia obligatoria",
+              r"(?<![\w-])font(-family)?\s*:", fuente)
     elif R["tipografia"].get("debe_ir_empotrada"):
         if "@font-face" not in doc:
             falla(f"{fam} no está empotrada",
@@ -119,18 +366,19 @@ def revisar(ruta: Path) -> int:
     for palabra in C["palabras_prohibidas"]:
         if re.search(rf"\b{re.escape(palabra)}\b", texto):
             falla(f"aparece «{palabra}»",
-                  f"el sufijo de millones es {C['sufijo_millones']}")
+                  f"el sufijo de millones es {C['sufijo_millones']}",
+                  rf"\b{re.escape(palabra)}\b(?![^<]*>)", html, 0)
     otro_miles = "." if C["separador_miles"] == "," else ","
     for m in set(re.findall(rf"\$\s?\d{{1,3}}(?:\{otro_miles}\d{{3}})+", texto)):
         falla("separador de miles equivocado",
-              f"{m}  ->  use «{C['separador_miles']}»")
+              f"{m}  ->  use «{C['separador_miles']}»", re.escape(m), html)
     otro_dec = "." if C["separador_decimal"] == "," else ","
     for m in set(re.findall(rf"\d+\{otro_dec}\d+\s?%", texto)):
         falla("separador decimal equivocado en un porcentaje",
-              f"{m}  ->  use «{C['separador_decimal']}»")
+              f"{m}  ->  use «{C['separador_decimal']}»", re.escape(m), html)
     if C["espacio_antes_del_porcentaje"]:
         for m in set(re.findall(r"\d+(?:[.,]\d+)?%", texto)):
-            falla("falta el espacio antes del %", m)
+            falla("falta el espacio antes del %", m, rf"(?<![\d.,]){re.escape(m)}", html)
     if C["signo_antes_del_simbolo"] and re.search(r"\$\s?[-−]\d", texto):
         falla("el signo va después del símbolo",
               f"en negativos va antes: −$73{C['separador_decimal']}9 {C['sufijo_millones']}")
@@ -139,44 +387,73 @@ def revisar(ruta: Path) -> int:
     if R["narrativa"]["titulos_deben_afirmar"]:
         vagos = tuple(R["narrativa"]["inicios_vagos"])
         for tag in ("h1", "h2", "h3"):
-            for t in re.findall(rf"<{tag}[^>]*>(.*?)</{tag}>", doc, re.S | re.I):
-                limpio = re.sub(r"<[^>]+>", "", t).strip()
+            for m in re.finditer(rf"<{tag}\b[^>]*>(.*?)</{tag}>", html, re.S | re.I):
+                limpio = re.sub(r"<[^>]+>", "", m.group(1)).strip()
                 if limpio and limpio.lower().startswith(vagos):
-                    falla("título que nombra en vez de afirmar", limpio[:70])
+                    hallazgos.append(Hallazgo("título que nombra en vez de afirmar",
+                                              limpio[:70], [html.count("\n", 0, m.start()) + 1]))
 
     # ── diseño plano ────────────────────────────────────────────────────────
     if R["diseno"]["plano"]:
         for prop in R["diseno"]["propiedades_prohibidas"]:
             if prop.endswith("-gradient"):
+                patron = rf"{re.escape(prop)}\s*\("
                 # Un degradado es una FUNCIÓN dentro de otra propiedad
                 # (`background: linear-gradient(...)`), no una propiedad. Buscarlo
                 # como `linear-gradient:` no encuentra nunca nada, y el auditor
                 # daba por limpia una página llena de degradados.
                 usos = re.findall(rf"{re.escape(prop)}\s*\(", css)
             else:
+                patron = rf"(?<![\w-]){re.escape(prop)}\s*:(?!\s*none)"
                 # 'none' es lo contrario: quitar una sombra heredada.
                 usos = [x for x in re.findall(rf"{re.escape(prop)}\s*:\s*([^;}}]+)", css)
                         if "none" not in x.lower()]
             if usos:
-                falla(f"se usa {prop}", f"la casa es de diseño plano ({len(usos)} veces)")
+                falla(f"se usa {prop}", f"la casa es de diseño plano ({len(usos)} veces)",
+                      patron, fuente)
 
     return len(doc)
 
 
-def en_navegador(ruta: Path):
-    """Abrirla de verdad. Un `getElementById` a un id que ya no existe deja la
-    página en blanco, y ninguna expresión regular ve eso."""
-    chrome = next((Path(p) for p in (
+def buscar_navegador() -> Path | None:
+    """Chrome o Chromium. AUDITOR_NAVEGADOR=/ruta/al/binario manda sobre todo
+    (sirve para un Chromium portátil, el de Playwright, Edge, Brave…)."""
+    propio = os.environ.get("AUDITOR_NAVEGADOR")
+    if propio:
+        if Path(propio).is_file():
+            return Path(propio)
+        print(f"   AUDITOR_NAVEGADOR apunta a algo que no existe: {propio}")
+        return None
+    fijo = next((Path(p) for p in (
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/usr/bin/google-chrome", "/usr/bin/chromium",
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     ) if Path(p).exists()), None)
+    if fijo:
+        return fijo
+    encontrado = next(filter(None, (shutil.which(n) for n in (
+        "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"))), None)
+    return Path(encontrado) if encontrado else None
+
+
+def espera_navegador() -> float:
+    """Segundos que se espera a Chrome (AUDITOR_NAVEGADOR_ESPERA, 90 por defecto).
+    Con la máquina cargada, arrancar Chrome puede tardar; agotar la espera es un
+    hallazgo, nunca un «conforme». ValueError si no es un número positivo."""
+    valor = float(os.environ.get("AUDITOR_NAVEGADOR_ESPERA", "90"))
+    if valor <= 0:
+        raise ValueError(f"AUDITOR_NAVEGADOR_ESPERA debe ser positivo: {valor}")
+    return valor
+
+
+def en_navegador(ruta: Path, espera: float = 90):
+    """Abrirla de verdad. Un `getElementById` a un id que ya no existe deja la
+    página en blanco, y ninguna expresión regular ve eso."""
+    chrome = buscar_navegador()
     if not chrome:
-        encontrado = next(filter(None, (shutil.which(n) for n in (
-            "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"))), None)
-        chrome = Path(encontrado) if encontrado else None
-    if not chrome:
-        print("   (no se encontró Chrome: se omite la prueba en navegador)")
+        print("   (no se encontró Chrome: se omite la prueba en navegador;"
+              " indíquelo con AUDITOR_NAVEGADOR=/ruta/al/binario)")
         return
 
     arnes = """
@@ -198,13 +475,21 @@ def en_navegador(ruta: Path):
         tmp = Path(carpeta) / "chk.html"
         tmp.write_text(inyectado, encoding="utf-8")
         try:
-            r = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", "--no-sandbox",
+            # El sandbox aísla el JS de la página (puede traer librerías de
+            # terceros). Solo se quita como root, donde Chrome no arranca con él.
+            sin_sandbox = ["--no-sandbox"] if getattr(os, "geteuid", lambda: 1)() == 0 else []
+            # Perfil propio y desechable: no comparte estado ni bloqueos con un
+            # Chrome abierto ni con otras auditorías que corran a la vez.
+            r = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", *sin_sandbox,
+                                f"--user-data-dir={Path(carpeta) / 'perfil'}",
+                                "--no-first-run", "--no-default-browser-check",
                                 "--virtual-time-budget=15000", "--window-size=1680,1200",
                                 "--dump-dom", tmp.as_uri()],
                                capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=90, check=False)
+                               errors="replace", timeout=espera, check=False)
         except subprocess.TimeoutExpired:
-            falla("la página no respondió en el navegador", "se agotó el tiempo")
+            falla("la página no respondió en el navegador",
+                  f"se agotó la espera de {espera:g} s (AUDITOR_NAVEGADOR_ESPERA)")
             return
     m = re.search(r"<title>CHK::(.*?)::(\d+)</title>", r.stdout, re.S)
     if not m:
@@ -232,6 +517,18 @@ def main() -> int:
         print(f"No existe o no es un archivo: {ruta}", file=sys.stderr)
         return 2
 
+    try:
+        espera = espera_navegador() if a.navegador else 90
+    except ValueError as e:
+        print(f"No se pudo auditar en navegador: {e}", file=sys.stderr)
+        return 2
+    propio = os.environ.get("AUDITOR_NAVEGADOR")
+    if a.navegador and propio and not Path(propio).is_file():
+        # Se pidió el navegador y se indicó cuál, pero no está: no se pudo auditar.
+        # (Sin AUDITOR_NAVEGADOR y sin Chrome, se avisa y se omite, como siempre.)
+        print(f"AUDITOR_NAVEGADOR apunta a algo que no existe: {propio}", file=sys.stderr)
+        return 2
+
     print("=" * 68)
     print(f"AUDITORÍA · {ruta.name}")
     print("=" * 68)
@@ -243,18 +540,22 @@ def main() -> int:
         return 2
     print(f"   {n/1e3:,.0f} KB de HTML revisados")
     if a.navegador:
-        en_navegador(ruta)
+        en_navegador(ruta, espera)
 
     print()
     if not hallazgos:
-        print("RESULTADO: conforme. Paleta, tipografía, cifras y narrativa cumplen.")
+        if sin_leer:
+            print(f"RESULTADO: conforme, salvo {len(sin_leer)} color(es) que no se pudieron"
+                  " leer (vea las notas).")
+        else:
+            print("RESULTADO: conforme. Paleta, tipografía, cifras y narrativa cumplen.")
         print("Ojo: esto NO verifica que los números estén bien.")
         return 0
 
     print(f"RESULTADO: {len(hallazgos)} hallazgo(s).")
     por_regla: dict[str, list[str]] = {}
-    for regla, det in hallazgos:
-        por_regla.setdefault(regla, []).append(det)
+    for h in hallazgos:
+        por_regla.setdefault(h[0], []).append(h[1] + _donde(h.lineas))
     for regla, dets in por_regla.items():
         print(f"\n  {regla}  ({len(dets)})")
         for d in dets[:8]:
