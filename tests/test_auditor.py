@@ -217,3 +217,16 @@ def test_color_que_no_sabe_leer_se_avisa(tmp_path):
     assert "conforme, salvo 3 color(es) que no se pudieron leer" in salida
     for c in ("oklch(60% 0.2 30)", "hwb(120 0% 0%)", "color(srgb 1 0 0)"):
         assert c in salida, salida
+
+
+def test_color_con_nombre_dice_todas_sus_lineas(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>\n"   # 1
+                 "<h1>Norte supera la meta</h1>\n"                     # 2
+                 "<p><font color=\"red\">x</font></p>\n"              # 3
+                 "<div style=\"color:red\">x</div>\n"                  # 4
+                 "<div style=\"color:\n"                               # 5
+                 " red\">x</div>\n", encoding="utf-8")                 # 6
+    A.revisar(f)
+    (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
+    assert h.lineas == [3, 4, 6]

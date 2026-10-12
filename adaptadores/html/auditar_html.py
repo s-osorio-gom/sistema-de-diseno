@@ -285,8 +285,14 @@ def revisar(ruta: Path) -> int:
                 print("   nota: sin matplotlib no se revisan los colores con nombre (red, gray…)")
             for nombre in sorted(nombres & tabla.keys()):
                 if tabla[nombre] not in permitidos:
-                    falla("color con nombre fuera de la paleta", nombre,
-                          rf":[^;{{}}]*(?<![\w#-]){nombre}(?![\w(-])", fuente)
+                    # Cada aparición como VALOR (tras «:» de una declaración o
+                    # «=» de un atributo), aunque el valor siga en otra línea.
+                    lineas = [fuente.count("\n", 0, m.start()) + 1 for m in re.finditer(
+                        rf"(?<![\w#-]){nombre}(?![\w(-])", fuente, re.I)
+                        if re.search(r"(:[^;{}<>\"']*|=\s*[\"']?)$",
+                                     fuente[max(0, m.start() - 300):m.start()])]
+                    hallazgos.append(Hallazgo("color con nombre fuera de la paleta",
+                                              nombre, lineas))
 
     # ── tipografía ──────────────────────────────────────────────────────────
     fam = R["tipografia"]["familia_obligatoria"]
