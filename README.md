@@ -131,7 +131,10 @@ RESULTADO: 13 hallazgo(s).
   `getElementById` a un id que ya no existe no lo ve ninguna expresión regular.
   Si no encuentra el navegador, lo dice y omite esa prueba; para usar otro
   binario (un Chromium portátil, el de Playwright), `AUDITOR_NAVEGADOR=/ruta`;
-  si esa ruta no existe, devuelve 2 (no se pudo auditar).
+  si esa ruta no existe, devuelve 2 (no se pudo auditar). Espera 90 s a que
+  Chrome responda (`AUDITOR_NAVEGADOR_ESPERA` para otra cifra); agotar la espera
+  es un hallazgo, no un «conforme». Cada auditoría usa un perfil de Chrome
+  temporal propio.
   El sandbox de Chrome solo se desactiva si se corre como root.
 
 Si la página empotra librerías de terceros, envuelva su propio CSS en
@@ -207,6 +210,8 @@ esas palabras y nadie entiende por qué.
   paleta: el resultado dice «conforme, salvo N color(es) que no se pudieron
   leer». Los escapes de CSS (`\23 123456`) no se decodifican y pasan sin
   hallazgo.
+- **No mira dentro de `url(…)`.** Un SVG empotrado como data URI en el CSS
+  (`url("data:image/svg+xml,<svg fill='#…'/>")`) no se audita.
 - **La familia obligatoria se busca en cualquier regla.** Un `@font-face` que
   declara Inter cuenta, aunque el `body` use Arial.
 - **Con `<style id="casa">`, los demás `<style>` no se auditan**, aunque sean

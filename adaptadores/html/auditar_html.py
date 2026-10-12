@@ -22,7 +22,7 @@ QUÉ REVISA
     diseño       sombras y degradados, si la casa es de diseño plano
     navegador    que la página abra, pinte y no lance errores de JavaScript
                  (Chrome/Chromium; otro binario con AUDITOR_NAVEGADOR=/ruta,
-                 que devuelve 2 si no existe)
+                 que devuelve 2 si no existe; espera AUDITOR_NAVEGADOR_ESPERA s)
 
     Cada hallazgo dice su línea en el archivo.
 
