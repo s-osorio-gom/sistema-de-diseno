@@ -20,13 +20,14 @@ DEFECTUOSO = RAIZ / "ejemplo" / "tablero_con_defectos.html"
 def con_tokens(html: str) -> str:
     """Sustituye {{rol}} por el color del rol en tokens.json, en la notación
     pedida: {{rol}} #RRGGBB · :min minúsculas · :alfa #RRGGBB80 · :rgb rgb(r g b)
-    · :rgba rgba(r,g,b,.5) · :hsl hsl(h s% l%)."""
+    · :rgbc rgb(r, g, b) · :rgba rgba(r,g,b,.5) · :hsl hsl(h s% l%)."""
     def uno(m):
         hx = T.color(m.group(1))
         r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
         h, luz, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
         return {None: hx, "min": hx.lower(), "alfa": hx + "80",
                 "rgb": f"rgb({r} {g} {b})", "rgba": f"rgba({r},{g},{b},.5)",
+                "rgbc": f"rgb({r}, {g}, {b})",
                 "hsl": f"hsl({h * 360:.1f}deg {sat * 100:.1f}% {luz * 100:.1f}%)",
                 }[m.group(2)]
     return re.sub(r"\{\{(\w+)(?::(\w+))?\}\}", uno, html)
@@ -76,9 +77,12 @@ def test_rgb_de_la_paleta_no_se_reporta(tmp_path):
     # mismo (antes leía un rgb fijo del ejemplo y fallaba al cambiar la paleta).
     f = tmp_path / "x.html"
     f.write_text(con_tokens("<style id='casa'>body{font-family:Inter}"
-                            "h1{color:{{principal:rgb}}} p{color:{{texto:rgba}}}</style>"
+                            "h1{color:{{principal:rgb}}} p{color:{{texto:rgba}}}"
+                            "h2{color:{{principal_oscuro:rgbc}}}"
+                            ".caja{border-color:rgba(0,0,0,.2)}</style>"
                             "<h1>Norte supera la meta</h1>"), encoding="utf-8")
     assert reglas_de(f) == set()
+    assert A.sin_leer == []          # se leyeron, no se dejaron pasar sin leer
 
 
 def test_revisar_dos_veces_no_acumula():
@@ -201,6 +205,7 @@ def test_cada_defecto_del_ejemplo_dice_su_linea():
     assert [h.lineas for h in A.hallazgos if h[0] == "se usa box-shadow"] == [[marca[4]]]
     assert [h.lineas for h in A.hallazgos if h[0] == "se usa linear-gradient"] == [[marca[5]]]
     assert [h.lineas for h in A.hallazgos if h[0] == "aparece «MM»"] == [[marca[11]]]
+    assert [h.lineas for h in A.hallazgos if h[0] == "aparece «COP»"] == [[marca[8]]]
 
 
 def test_el_reporte_imprime_la_linea():
