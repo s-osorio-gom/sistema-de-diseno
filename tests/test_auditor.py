@@ -162,6 +162,8 @@ DEFECTOS = {
     "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
     "estilo_en_linea_y_svg": {"color fuera de la paleta": {"#FF00FF", "#123456", "#00FF00"}},
     "atributos_sin_comillas": {"color fuera de la paleta": {"#FF0000", "#00FF00"}},
+    "mayor_y_menor_dentro_de_atributos": {
+        "color fuera de la paleta": {"#FF0000", "#00FF00", "#CCCCCC", "#ABCDEF"}},
     "hsl_en_radianes": {"hsl() fuera de la paleta": set()},
     "nombre_en_filter_y_background_image": {
         "color con nombre fuera de la paleta": {"red", "tomato", "olive"}},
@@ -248,3 +250,9 @@ def test_navegador_indicado_que_no_existe_devuelve_2(tmp_path):
                        env={**os.environ, "AUDITOR_NAVEGADOR": str(tmp_path / "no_existe")})
     assert r.returncode == 2, r.stdout
     assert "AUDITOR_NAVEGADOR" in r.stdout + r.stderr
+
+
+def test_atributo_de_color_dice_su_linea_aunque_la_etiqueta_ocupe_dos():
+    A.revisar(RAIZ / "tests" / "html" / "defectos" / "mayor_y_menor_dentro_de_atributos.html")
+    donde = {d: h.lineas for h in A.hallazgos for _, d in [h]}
+    assert donde["#FF0000"] == [4] and donde["#CCCCCC"] == [6] and donde["#ABCDEF"] == [8]

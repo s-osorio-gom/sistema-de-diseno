@@ -49,6 +49,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
@@ -122,24 +123,45 @@ def valores(css: str) -> str:
                      for _, v in declaraciones(css))
 
 
-def css_en_linea(doc: str) -> str:
-    """Lo que se pinta desde el HTML: style="" y los atributos de color de SVG
-    (fill, stroke…) y del HTML antiguo (color, bgcolor), como reglas CSS.
+ATRIBUTOS_DE_COLOR = ("style", "fill", "stroke", "stop-color", "flood-color", "color", "bgcolor")
 
-    Solo atributos de etiquetas del cuerpo: el texto visible no (un párrafo que
-    explique «color="#FF0000"» no pinta nada), ni <head>, <link> o <meta>
-    (`<link rel="mask-icon" color="…">` es el icono del navegador)."""
-    cuerpo = _vaciar(r"<head\b.*?</head\s*>", sin_codigo(doc))
-    reglas = []
-    for etiqueta in re.finditer(r"<([a-zA-Z][\w:-]*)(\s[^<>]*)>", cuerpo):
-        if etiqueta.group(1).lower() in ("link", "meta"):
-            continue
-        for m in re.finditer(
-                r"\s(style|fill|stroke|stop-color|flood-color|color|bgcolor)\s*=\s*"
-                r"(?:([\"'])(.*?)\2|([^\s\"'>]+))", etiqueta.group(2), re.S | re.I):
-            valor = m.group(3) if m.group(2) else m.group(4)    # con o sin comillas
-            reglas.append(valor if m.group(1).lower() == "style" else f"{m.group(1)}:{valor}")
-    return "\n".join("{" + r + "}" for r in reglas)
+
+class _LectorDeAtributos(HTMLParser):
+    """Lee las etiquetas con el parser de la biblioteca estándar: respeta las
+    comillas (`title="a > b"` no corta la etiqueta), acepta valores sin comillas
+    y decodifica entidades. Guarda (línea, declaración CSS) de cada atributo de
+    color. <link> y <meta> no pintan (`<link rel="mask-icon" color="…">`)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.reglas: list[tuple[int, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("link", "meta"):
+            return
+        linea, crudo = self.getpos()[0], self.get_starttag_text() or ""
+        for nombre, valor in attrs:
+            if nombre in ATRIBUTOS_DE_COLOR and valor:
+                m = re.search(rf"\s{re.escape(nombre)}\s*=", crudo, re.I)
+                n = linea + (crudo[:m.start()].count("\n") if m else 0)
+                self.reglas.append((n, valor if nombre == "style" else f"{nombre}:{valor}"))
+
+    handle_startendtag = handle_starttag
+
+
+def atributos_de_color(doc: str) -> list[tuple[int, str]]:
+    """(línea, declaración) de los style="" y atributos de color de las etiquetas,
+    fuera de comentarios y <script>. El texto visible nunca cuenta."""
+    lector = _LectorDeAtributos()
+    lector.feed(sin_codigo(doc))
+    lector.close()
+    return lector.reglas
+
+
+def css_en_linea(doc: str) -> str:
+    """Lo que se pinta desde el HTML (style="", fill, stroke, color, bgcolor…)
+    como reglas CSS, para auditarlo junto con los <style>."""
+    return "\n".join("{" + r + "}" for _, r in atributos_de_color(doc))
 
 
 # Propiedades donde una palabra suelta puede ser un color con nombre («red»).
