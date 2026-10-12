@@ -118,12 +118,21 @@ def valores(css: str) -> str:
 
 def css_en_linea(doc: str) -> str:
     """Lo que se pinta desde el HTML: style="" y los atributos de color de SVG
-    (fill, stroke…) y del HTML antiguo (color, bgcolor), como reglas CSS."""
-    html = sin_codigo(doc)
-    reglas = [m.group(2) for m in re.finditer(r"\sstyle\s*=\s*([\"'])(.*?)\1", html, re.S | re.I)]
-    reglas += [f"{m.group(1)}:{m.group(3)}" for m in re.finditer(
-        r"\s(fill|stroke|stop-color|flood-color|color|bgcolor)\s*=\s*([\"'])(.*?)\2",
-        html, re.S | re.I)]
+    (fill, stroke…) y del HTML antiguo (color, bgcolor), como reglas CSS.
+
+    Solo atributos de etiquetas del cuerpo: el texto visible no (un párrafo que
+    explique «color="#FF0000"» no pinta nada), ni <head>, <link> o <meta>
+    (`<link rel="mask-icon" color="…">` es el icono del navegador)."""
+    cuerpo = _vaciar(r"<head\b.*?</head\s*>", sin_codigo(doc))
+    reglas = []
+    for etiqueta in re.finditer(r"<([a-zA-Z][\w:-]*)(\s[^<>]*)>", cuerpo):
+        if etiqueta.group(1).lower() in ("link", "meta"):
+            continue
+        for m in re.finditer(
+                r"\s(style|fill|stroke|stop-color|flood-color|color|bgcolor)\s*=\s*"
+                r"([\"'])(.*?)\2", etiqueta.group(2), re.S | re.I):
+            valor = m.group(3)
+            reglas.append(valor if m.group(1).lower() == "style" else f"{m.group(1)}:{valor}")
     return "\n".join("{" + r + "}" for r in reglas)
 
 
