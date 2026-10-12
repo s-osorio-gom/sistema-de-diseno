@@ -1,6 +1,7 @@
 """El auditor: muerde el defectuoso, deja pasar el conforme y no confunde un
 fallo propio con un hallazgo."""
 import colorsys
+import os
 import re
 import subprocess
 import sys
@@ -230,3 +231,15 @@ def test_color_con_nombre_dice_todas_sus_lineas(tmp_path):
     A.revisar(f)
     (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
     assert h.lineas == [3, 4, 6]
+
+
+def test_navegador_indicado_que_no_existe_devuelve_2(tmp_path):
+    # Se pidió auditar en navegador y no se pudo: no es «conforme».
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(AUDITOR), str(f), "--navegador"],
+                       capture_output=True, text=True, encoding="utf-8", check=False,
+                       env={**os.environ, "AUDITOR_NAVEGADOR": str(tmp_path / "no_existe")})
+    assert r.returncode == 2, r.stdout
+    assert "AUDITOR_NAVEGADOR" in r.stdout + r.stderr

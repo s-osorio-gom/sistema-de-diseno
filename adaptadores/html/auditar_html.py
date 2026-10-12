@@ -448,6 +448,13 @@ def main() -> int:
         print(f"No existe o no es un archivo: {ruta}", file=sys.stderr)
         return 2
 
+    propio = os.environ.get("AUDITOR_NAVEGADOR")
+    if a.navegador and propio and not Path(propio).is_file():
+        # Se pidió el navegador y se indicó cuál, pero no está: no se pudo auditar.
+        # (Sin AUDITOR_NAVEGADOR y sin Chrome, se avisa y se omite, como siempre.)
+        print(f"AUDITOR_NAVEGADOR apunta a algo que no existe: {propio}", file=sys.stderr)
+        return 2
+
     print("=" * 68)
     print(f"AUDITORÍA · {ruta.name}")
     print("=" * 68)
