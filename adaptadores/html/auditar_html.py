@@ -130,8 +130,8 @@ def css_en_linea(doc: str) -> str:
             continue
         for m in re.finditer(
                 r"\s(style|fill|stroke|stop-color|flood-color|color|bgcolor)\s*=\s*"
-                r"([\"'])(.*?)\2", etiqueta.group(2), re.S | re.I):
-            valor = m.group(3)
+                r"(?:([\"'])(.*?)\2|([^\s\"'>]+))", etiqueta.group(2), re.S | re.I):
+            valor = m.group(3) if m.group(2) else m.group(4)    # con o sin comillas
             reglas.append(valor if m.group(1).lower() == "style" else f"{m.group(1)}:{valor}")
     return "\n".join("{" + r + "}" for r in reglas)
 
