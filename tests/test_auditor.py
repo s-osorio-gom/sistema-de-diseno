@@ -164,7 +164,9 @@ DEFECTOS = {
     "atributos_sin_comillas": {"color fuera de la paleta": {"#FF0000", "#00FF00"}},
     "mayor_y_menor_dentro_de_atributos": {
         "color fuera de la paleta": {"#FF0000", "#00FF00", "#CCCCCC", "#ABCDEF"}},
-    "hsl_en_radianes": {"hsl() fuera de la paleta": set()},
+    # El valor convertido se exige exacto: un factor de rad o grad erróneo falla.
+    "hsl_en_radianes": {"hsl() fuera de la paleta": {"hsl(1rad 100% 50%) = #FFF400",
+                                                      "hsl(200grad 60% 40%) = #29A3A3"}},
     "nombre_en_filter_y_background_image": {
         "color con nombre fuera de la paleta": {"red", "tomato", "olive"}},
 }
@@ -268,3 +270,25 @@ def test_color_con_nombre_no_cuenta_lineas_que_no_son_valores(tmp_path):
     A.revisar(f)
     (h,) = [h for h in A.hallazgos if h[0] == "color con nombre fuera de la paleta"]
     assert h.lineas == [4]
+
+
+def test_tolerancia_de_un_punto_por_canal(tmp_path):
+    # ±1 por redondeo se acepta; a 2 puntos ya es otro color.
+    r, g, b = (int(T.color("principal")[i:i + 2], 16) for i in (1, 3, 5))
+    r1, r2 = (r + 1, r + 2) if r < 254 else (r - 1, r - 2)
+    f = tmp_path / "x.html"
+    f.write_text(f"<style id='casa'>body{{font-family:Inter}} .a{{color:rgb({r1}, {g}, {b})}}"
+                 "</style><h1>Norte supera la meta</h1>", encoding="utf-8")
+    assert reglas_de(f) == set()
+    f.write_text(f"<style id='casa'>body{{font-family:Inter}} .a{{color:rgb({r2}, {g}, {b})}}"
+                 "</style><h1>Norte supera la meta</h1>", encoding="utf-8")
+    assert reglas_de(f) == {"rgb() fuera de la paleta"}
+
+
+def test_rgb_ilegible_se_avisa(tmp_path):
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter} .a{color:rgb(rojo 0 0)}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    A.revisar(f)
+    assert A.sin_leer == ["rgb(rojo 0 0)"]
+    assert "no se pudo leer el color rgb(rojo 0 0)" in correr(f).stdout
