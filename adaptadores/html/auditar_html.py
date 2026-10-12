@@ -114,8 +114,10 @@ def declaraciones(css: str) -> list[tuple[str, str]]:
 
 
 def valores(css: str) -> str:
-    # url(#fade) es una referencia a un id, no un color.
-    return "\n".join(re.sub(r"url\([^)]*\)", " ", v) for _, v in declaraciones(css))
+    # url(#fade) es una referencia a un id, y content:'Ref #ABC' es texto: ninguno
+    # es un color.
+    return "\n".join(re.sub(r"url\([^)]*\)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'", " ", v)
+                     for _, v in declaraciones(css))
 
 
 def css_en_linea(doc: str) -> str:
