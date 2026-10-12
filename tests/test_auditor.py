@@ -157,6 +157,7 @@ DEFECTOS = {
     "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
     "estilo_en_linea_y_svg": {"color fuera de la paleta": {"#FF00FF", "#123456", "#00FF00"}},
     "atributos_sin_comillas": {"color fuera de la paleta": {"#FF0000", "#00FF00"}},
+    "hsl_en_radianes": {"hsl() fuera de la paleta": set()},
     "nombre_en_filter_y_background_image": {
         "color con nombre fuera de la paleta": {"red", "tomato", "olive"}},
 }
@@ -203,3 +204,16 @@ def test_cada_defecto_del_ejemplo_dice_su_linea():
 
 def test_el_reporte_imprime_la_linea():
     assert "#333333  (línea 11)" in correr(DEFECTUOSO).stdout
+
+
+def test_color_que_no_sabe_leer_se_avisa(tmp_path):
+    # oklch(), hwb(), color()… no se convierten: no pueden pasar en silencio.
+    f = tmp_path / "x.html"
+    f.write_text("<style id='casa'>body{font-family:Inter}\n.a{color:oklch(60% 0.2 30)}"
+                 ".b{color:hwb(120 0% 0%)}\n.c{color:color(srgb 1 0 0)}</style>"
+                 "<h1>Norte supera la meta</h1>", encoding="utf-8")
+    salida = correr(f).stdout
+    assert "no se pudo leer" in salida
+    assert "conforme, salvo 3 color(es) que no se pudieron leer" in salida
+    for c in ("oklch(60% 0.2 30)", "hwb(120 0% 0%)", "color(srgb 1 0 0)"):
+        assert c in salida, salida

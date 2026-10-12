@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import math
 import os
 import re
 import shutil
@@ -63,6 +64,7 @@ class Hallazgo(tuple):
 
 
 hallazgos: list[Hallazgo] = []
+sin_leer: list[str] = []          # colores que el auditor no sabe convertir
 
 
 def falla(regla: str, detalle: str, patron: str | None = None, en: str = "",
@@ -160,7 +162,9 @@ def a_rgb(funcion: str, args: str) -> tuple[int, int, int] | None:
             return tuple(round(float(x[:-1]) * 2.55) if x.endswith("%") else round(float(x))
                          for x in partes)
         h, sat, luz = partes
-        h = float(h[:-4]) * 360 if h.endswith("turn") else float(h.removesuffix("deg"))
+        por_unidad = {"turn": 360, "grad": 0.9, "rad": 180 / math.pi, "deg": 1}
+        unidad = next((u for u in por_unidad if h.endswith(u)), "")
+        h = float(h.removesuffix(unidad)) * por_unidad.get(unidad, 1)
         r, g, b = colorsys.hls_to_rgb((h % 360) / 360, float(luz.rstrip("%")) / 100,
                                       float(sat.rstrip("%")) / 100)
         return round(r * 255), round(g * 255), round(b * 255)
@@ -195,6 +199,7 @@ def texto_visible(doc: str) -> str:
 
 def revisar(ruta: Path) -> int:
     hallazgos.clear()
+    sin_leer.clear()
     R = T.reglas()
     doc = ruta.read_text(encoding="utf-8", errors="replace")
 
@@ -238,9 +243,26 @@ def revisar(ruta: Path) -> int:
             return any(all(abs(a - b) <= 1 for a, b in zip(trio, v, strict=True))
                        for v in validos)
 
+        def no_se_pudo_leer(texto: str):
+            # No es un hallazgo (puede ser de la paleta), pero tampoco puede pasar
+            # en silencio: se avisa con su línea para revisarlo a mano.
+            lineas = [fuente.count("\n", 0, m.start()) + 1
+                      for m in re.finditer(re.escape(texto), fuente, re.I)]
+            sin_leer.append(texto)
+            print(f"   nota: no se pudo leer el color {texto}{_donde(lineas)}:"
+                  " revíselo a mano")
+
+        for funcion, args in sorted(set(re.findall(
+                r"\b(oklch|oklab|lch|lab|hwb|color)\(([^)]*)\)", en_uso, re.I))):
+            no_se_pudo_leer(f"{funcion}({args})")
+
         for funcion, args in sorted(set(re.findall(r"\b(rgba?|hsla?)\(([^)]*)\)", en_uso, re.I))):
             trio = a_rgb(funcion.lower(), args)
-            if trio is None or en_paleta(trio):
+            if trio is None:
+                if "var" not in args:        # con var() el valor sale de otra regla
+                    no_se_pudo_leer(f"{funcion}({args})")
+                continue
+            if en_paleta(trio):
                 continue
             if funcion.lower().startswith("rgb"):
                 falla("rgb() fuera de la paleta", f"rgb{trio}",
@@ -435,7 +457,11 @@ def main() -> int:
 
     print()
     if not hallazgos:
-        print("RESULTADO: conforme. Paleta, tipografía, cifras y narrativa cumplen.")
+        if sin_leer:
+            print(f"RESULTADO: conforme, salvo {len(sin_leer)} color(es) que no se pudieron"
+                  " leer (vea las notas).")
+        else:
+            print("RESULTADO: conforme. Paleta, tipografía, cifras y narrativa cumplen.")
         print("Ojo: esto NO verifica que los números estén bien.")
         return 0
 
