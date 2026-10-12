@@ -437,7 +437,17 @@ def buscar_navegador() -> Path | None:
     return Path(encontrado) if encontrado else None
 
 
-def en_navegador(ruta: Path):
+def espera_navegador() -> float:
+    """Segundos que se espera a Chrome (AUDITOR_NAVEGADOR_ESPERA, 90 por defecto).
+    Con la máquina cargada, arrancar Chrome puede tardar; agotar la espera es un
+    hallazgo, nunca un «conforme». ValueError si no es un número positivo."""
+    valor = float(os.environ.get("AUDITOR_NAVEGADOR_ESPERA", "90"))
+    if valor <= 0:
+        raise ValueError(f"AUDITOR_NAVEGADOR_ESPERA debe ser positivo: {valor}")
+    return valor
+
+
+def en_navegador(ruta: Path, espera: float = 90):
     """Abrirla de verdad. Un `getElementById` a un id que ya no existe deja la
     página en blanco, y ninguna expresión regular ve eso."""
     chrome = buscar_navegador()
@@ -468,13 +478,18 @@ def en_navegador(ruta: Path):
             # El sandbox aísla el JS de la página (puede traer librerías de
             # terceros). Solo se quita como root, donde Chrome no arranca con él.
             sin_sandbox = ["--no-sandbox"] if getattr(os, "geteuid", lambda: 1)() == 0 else []
+            # Perfil propio y desechable: no comparte estado ni bloqueos con un
+            # Chrome abierto ni con otras auditorías que corran a la vez.
             r = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", *sin_sandbox,
+                                f"--user-data-dir={Path(carpeta) / 'perfil'}",
+                                "--no-first-run", "--no-default-browser-check",
                                 "--virtual-time-budget=15000", "--window-size=1680,1200",
                                 "--dump-dom", tmp.as_uri()],
                                capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=90, check=False)
+                               errors="replace", timeout=espera, check=False)
         except subprocess.TimeoutExpired:
-            falla("la página no respondió en el navegador", "se agotó el tiempo")
+            falla("la página no respondió en el navegador",
+                  f"se agotó la espera de {espera:g} s (AUDITOR_NAVEGADOR_ESPERA)")
             return
     m = re.search(r"<title>CHK::(.*?)::(\d+)</title>", r.stdout, re.S)
     if not m:
@@ -502,6 +517,11 @@ def main() -> int:
         print(f"No existe o no es un archivo: {ruta}", file=sys.stderr)
         return 2
 
+    try:
+        espera = espera_navegador() if a.navegador else 90
+    except ValueError as e:
+        print(f"No se pudo auditar en navegador: {e}", file=sys.stderr)
+        return 2
     propio = os.environ.get("AUDITOR_NAVEGADOR")
     if a.navegador and propio and not Path(propio).is_file():
         # Se pidió el navegador y se indicó cuál, pero no está: no se pudo auditar.
@@ -520,7 +540,7 @@ def main() -> int:
         return 2
     print(f"   {n/1e3:,.0f} KB de HTML revisados")
     if a.navegador:
-        en_navegador(ruta)
+        en_navegador(ruta, espera)
 
     print()
     if not hallazgos:

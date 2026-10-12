@@ -1,5 +1,6 @@
 """El modo --navegador: abre la página en Chrome/Chromium sin interfaz. Se omite
 si no hay navegador (o se le indica uno con AUDITOR_NAVEGADOR)."""
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,10 +17,14 @@ pytestmark = pytest.mark.skipif(A.buscar_navegador() is None,
                                 reason="no hay Chrome/Chromium (AUDITOR_NAVEGADOR)")
 
 
-def navegador(ruta: Path) -> subprocess.CompletedProcess:
+def navegador(ruta: Path, espera: str = "300") -> subprocess.CompletedProcess:
+    # Espera holgada: con la máquina cargada Chrome puede tardar en arrancar, y
+    # agotarla no es lo que estas pruebas miden. Agotarla sigue siendo un
+    # hallazgo (ver test_agotar_la_espera_es_un_hallazgo), no un «conforme».
     return subprocess.run([sys.executable, str(AUDITOR), str(ruta), "--navegador"],
                           capture_output=True, text=True, encoding="utf-8", check=False,
-                          timeout=180)
+                          timeout=(float(espera) if espera.replace(".", "").isdigit() else 0) + 120,
+                          env={**os.environ, "AUDITOR_NAVEGADOR_ESPERA": espera})
 
 
 def test_tablero_conforme_abre_sin_errores(tmp_path):
@@ -43,3 +48,15 @@ def test_pagina_casi_vacia_se_reporta():
     r = navegador(RAIZ / "ejemplo" / "tablero_con_defectos.html")
     assert r.returncode == 1
     assert "la página abre prácticamente vacía" in r.stdout
+
+
+def test_agotar_la_espera_es_un_hallazgo(tmp_path):
+    r = navegador(E.tablero(tmp_path / "tablero.html"), espera="0.01")
+    assert r.returncode == 1, r.stdout
+    assert "la página no respondió en el navegador" in r.stdout
+    assert "0.01 s" in r.stdout
+
+
+def test_espera_invalida_devuelve_2(tmp_path):
+    r = navegador(E.tablero(tmp_path / "tablero.html"), espera="mucho")
+    assert r.returncode == 2
