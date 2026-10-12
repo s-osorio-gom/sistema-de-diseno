@@ -157,6 +157,8 @@ DEFECTOS = {
     "rgb_en_porcentaje": {"rgb() fuera de la paleta": {"rgb(255, 0, 0)"}},
     "estilo_en_linea_y_svg": {"color fuera de la paleta": {"#FF00FF", "#123456", "#00FF00"}},
     "atributos_sin_comillas": {"color fuera de la paleta": {"#FF0000", "#00FF00"}},
+    "nombre_en_filter_y_background_image": {
+        "color con nombre fuera de la paleta": {"red", "tomato", "olive"}},
 }
 
 

@@ -138,8 +138,8 @@ def css_en_linea(doc: str) -> str:
 
 # Propiedades donde una palabra suelta puede ser un color con nombre («red»).
 PROP_DE_COLOR = re.compile(
-    r"^(--.*|.*color|background|border(-[a-z-]+)?|outline|fill|stroke|"
-    r"text-decoration|column-rule|box-shadow|text-shadow)$")
+    r"^(--.*|.*color|background(-image)?|border(-[a-z-]+)?|outline|fill|stroke|"
+    r"text-decoration|column-rule|box-shadow|text-shadow|filter|backdrop-filter)$")
 
 
 def colores_con_nombre() -> dict[str, str]:
